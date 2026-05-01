@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from typing import Dict, List, Optional, Tuple
 
 
@@ -136,6 +137,78 @@ def find_platform_subtitle(video_folder: str) -> Optional[Tuple[str, str, str]]:
 # Whisper fallback
 # ----------------------------------------------------------------------
 
+def _run_whisper_in_process(
+    video_file: str,
+    model_size: str,
+    device: str,
+    compute_type: str,
+) -> Tuple[List[Dict], str]:
+    try:
+        from faster_whisper import WhisperModel  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "faster-whisper not installed. Run: pip install faster-whisper"
+        ) from e
+
+    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    segments_iter, info = model.transcribe(
+        video_file, beam_size=5,
+        vad_filter=True,
+        vad_parameters={'min_silence_duration_ms': 500},
+    )
+
+    segs: List[Dict] = []
+    for seg in segments_iter:
+        text = seg.text.strip()
+        if not text:
+            continue
+        segs.append({'start': float(seg.start), 'end': float(seg.end), 'text': text})
+    return segs, info.language
+
+
+
+def _run_whisper_isolated(
+    video_file: str,
+    model_size: str,
+    device: str,
+    compute_type: str,
+) -> Tuple[List[Dict], str]:
+    fd, output_json = tempfile.mkstemp(prefix='whisper_', suffix='.json')
+    os.close(fd)
+    try:
+        cmd = [
+            sys.executable,
+            os.path.abspath(__file__),
+            '--internal-whisper',
+            '--video-file',
+            video_file,
+            '--whisper-model',
+            model_size,
+            '--device',
+            device,
+            '--compute-type',
+            compute_type,
+            '--output-json',
+            output_json,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            detail = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f'worker exited with code {result.returncode}'
+            )
+            raise RuntimeError(detail)
+
+        with open(output_json, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        return payload['segments'], payload['language']
+    finally:
+        if os.path.exists(output_json):
+            os.unlink(output_json)
+
+
+
 def run_whisper(video_file: str, model_size: str = 'large-v3') -> Tuple[List[Dict], str]:
     """Transcribe video audio with faster-whisper.
 
@@ -144,45 +217,20 @@ def run_whisper(video_file: str, model_size: str = 'large-v3') -> Tuple[List[Dic
     Raises RuntimeError if faster-whisper isn't installed or ffmpeg extract
     fails. Caller decides whether to fall back to image_primary.
     """
+    # GPU failures on Windows can terminate the Python process inside native
+    # code before Python raises an exception. Run the GPU path in an isolated
+    # worker so the parent process can always fall back to CPU cleanly.
+    print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
     try:
-        from faster_whisper import WhisperModel  # type: ignore
-    except ImportError as e:
-        raise RuntimeError(
-            "faster-whisper not installed. Run: pip install faster-whisper"
-        ) from e
-
-    # faster-whisper can consume the video file directly via ffmpeg — no need
-    # to pre-extract audio.
-    # Try GPU first; if CUDA libs are missing (e.g. cublas64_12.dll not found)
-    # automatically fall back to CPU so the transcription still completes.
-    # NOTE: the CUDA error may fire lazily during iteration of the segments
-    # generator, not just during model init — so we wrap both in the try block.
-    def _collect(model_obj) -> Tuple[List[Dict], str]:
-        segments_iter, info = model_obj.transcribe(
-            video_file, beam_size=5,
-            vad_filter=True,            # skip silent parts, reduces hallucination
-            vad_parameters={'min_silence_duration_ms': 500},
+        return _run_whisper_isolated(video_file, model_size, 'cuda', 'float16')
+    except RuntimeError as gpu_err:
+        print(
+            f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
+            file=sys.stderr,
+            flush=True,
         )
-        segs: List[Dict] = []
-        for seg in segments_iter:
-            text = seg.text.strip()
-            if not text:
-                continue
-            segs.append({'start': float(seg.start), 'end': float(seg.end), 'text': text})
-        return segs, info.language
-
-    try:
-        # Use explicit cuda+float16 rather than 'auto' — 'auto' compute_type
-        # can select a cublas path that fails even when the GPU works fine.
-        print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
-        model = WhisperModel(model_size, device='cuda', compute_type='float16')
-        return _collect(model)
-    except Exception as gpu_err:
-        print(f"[transcribe_audio] GPU failed ({gpu_err}); retrying on CPU...",
-              file=sys.stderr, flush=True)
         print(f"[transcribe_audio] loading whisper model on CPU ({model_size})...", flush=True)
-        model = WhisperModel(model_size, device='cpu', compute_type='int8')
-        return _collect(model)
+        return _run_whisper_in_process(video_file, model_size, 'cpu', 'int8')
 
 
 # ----------------------------------------------------------------------
@@ -323,10 +371,31 @@ def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
 
 def main():
     parser = argparse.ArgumentParser(description='Produce subtitles.json with mode decision')
-    parser.add_argument('video_folder', help='Folder containing video.mp4 and (optional) video.<lang>.vtt')
+    parser.add_argument('video_folder', nargs='?', help='Folder containing video.mp4 and (optional) video.<lang>.vtt')
     parser.add_argument('--whisper-model', default='large-v3',
                         help='faster-whisper model size (tiny/base/small/medium/large-v3). Default: large-v3')
+    parser.add_argument('--internal-whisper', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--video-file', help=argparse.SUPPRESS)
+    parser.add_argument('--device', help=argparse.SUPPRESS)
+    parser.add_argument('--compute-type', help=argparse.SUPPRESS)
+    parser.add_argument('--output-json', help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.internal_whisper:
+        if not all([args.video_file, args.device, args.compute_type, args.output_json]):
+            parser.error('--internal-whisper requires --video-file, --device, --compute-type, and --output-json')
+        segments, language = _run_whisper_in_process(
+            args.video_file,
+            args.whisper_model,
+            args.device,
+            args.compute_type,
+        )
+        with open(args.output_json, 'w', encoding='utf-8') as f:
+            json.dump({'segments': segments, 'language': language}, f, ensure_ascii=False)
+        return
+
+    if not args.video_folder:
+        parser.error('video_folder is required unless --internal-whisper is set')
     transcribe(args.video_folder, whisper_model=args.whisper_model)
 
 

@@ -19,9 +19,9 @@ pip install yt-dlp you-get opencv-python numpy faster-whisper
 # ffmpeg 需要在 PATH 上
 ```
 
-验证：`python -c "from faster_whisper import WhisperModel; print('ok')"`
+可选导入检查：`python -c "import faster_whisper; print('ok')"`
 
-**Windows GPU 一次性配置**（转录崩溃 exit -1073740791 时执行）：
+**可选 Windows GPU 配置**（只在你想要更快的 GPU 转录时需要；没有它也会自动回退到 CPU）：
 
 ```powershell
 pip install nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cufft-cu12
@@ -68,7 +68,8 @@ python -u {baseDir}/scripts/subtitle/transcribe_audio.py "<folder>"
 
 - 在 CodeBuddy Code 里，这一步必须用 PowerShell tool，并设置 `timeout: 600000`。不要用 Bash。
 - GPU（large-v3，默认）：2-10 分钟。CPU fallback：最多 30 分钟。两者都正常。
-- Exit -1073740791 = CUDA DLL 未配置 → 执行上方 GPU 配置后重试。
+- 如果 stderr 明确说 GPU 失败并且脚本正在继续走 CPU，就继续等待；不要重试命令，也不要在运行中途切去排查 CUDA。
+- 只有在 Step 3 非零退出且没有写出 `subtitles.json`，或者 stderr 明确提示缺少 `faster-whisper` 时，才需要停下来处理环境问题。
 
 完成后读 `subtitles.json.mode`，决定 Step 4。
 
@@ -184,7 +185,7 @@ python {baseDir}/scripts/pass15_gaps/resolve_gaps.py "<folder>" --min-priority m
 
 ## 自检清单
 
-- [ ] **S0** — `python -c "from faster_whisper import WhisperModel; print('ok')"` 通过。
+- [ ] **S0** — Step 3 已完成，并写出 `subtitles.json`，且最后出现 `[transcribe_audio] mode=... source=...` 收尾日志。
 - [ ] **S1** — Pass 1 通过 `plan_batches.py` 并行 sub-agent 完成；主 agent 没有自己读帧。
 - [ ] **S2** — ToC 标题是主题名，不是时间段。
 - [ ] **S3** — 正文每条都能对应 `pass1_scan.json` 的 `transcribed_text`。

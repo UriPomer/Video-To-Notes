@@ -19,9 +19,9 @@ pip install yt-dlp you-get opencv-python numpy faster-whisper
 # ffmpeg must be on PATH
 ```
 
-Verify faster-whisper works: `python -c "from faster_whisper import WhisperModel; print('ok')"`
+Optional import smoke-check: `python -c "import faster_whisper; print('ok')"`
 
-**Windows GPU one-time setup** (needed if transcription crashes with exit -1073740791):
+**Optional Windows GPU setup** (only if you want faster GPU transcription; CPU fallback works without it):
 
 ```powershell
 pip install nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cufft-cu12
@@ -68,7 +68,8 @@ Done when you see: `[transcribe_audio] mode=subtitle_primary source=whisper_loca
 
 - In CodeBuddy Code, use the PowerShell tool for this step with `timeout: 600000`. Never use Bash.
 - GPU (large-v3, default): 2-10 min. CPU fallback: up to 30 min. Both are normal.
-- Exit -1073740791 = CUDA DLLs missing → run Windows GPU setup above, retry.
+- If stderr says the GPU failed and the script is continuing on CPU, keep waiting. Do not retry the command and do not start CUDA troubleshooting mid-run.
+- Only stop to fix the environment if Step 3 exits non-zero without writing `subtitles.json`, or if stderr explicitly says `faster-whisper` is missing.
 
 Read `subtitles.json.mode` after this step to decide Step 4.
 
@@ -184,7 +185,7 @@ Finalize: `Read` draft → `Write` complete final document to same path.
 
 ## Self-Check
 
-- [ ] **S0** — `python -c "from faster_whisper import WhisperModel; print('ok')"` passes.
+- [ ] **S0** — Step 3 finished and wrote `subtitles.json` with a final `[transcribe_audio] mode=... source=...` line.
 - [ ] **S1** — Pass 1 used parallel sub-agents via `plan_batches.py`; main agent never Read frames directly.
 - [ ] **S2** — ToC headings are topic names, not time ranges.
 - [ ] **S3** — Every body claim traces to `transcribed_text` in `pass1_scan.json`.
