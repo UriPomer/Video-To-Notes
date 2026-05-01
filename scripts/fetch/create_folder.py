@@ -97,6 +97,40 @@ def extract_title_with_youget(url: str) -> str | None:
     return None
 
 
+def extract_title_from_webpage(url: str) -> str | None:
+    """Fallback: fetch Bilibili/YouTube page HTML and extract <title> tag."""
+    import gzip
+    import io
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Encoding': 'identity'  # Avoid gzip to keep things simple
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+            # Decompress if server ignores Accept-Encoding and sends gzip
+            content_encoding = resp.headers.get('Content-Encoding', '')
+            if 'gzip' in content_encoding:
+                raw = gzip.decompress(raw)
+            html = raw.decode('utf-8', errors='replace')
+        # Match <title>...</title>
+        m = re.search(r'<title>(.*?)</title>', html, re.DOTALL)
+        if m:
+            title = m.group(1).strip()
+            # Remove Bilibili suffix: "视频标题_上传者名_bilibili"
+            parts = title.rsplit('_', 2)
+            if len(parts) >= 3 and parts[-1].lower() == 'bilibili':
+                title = parts[0]
+            # Remove YouTube suffix: "title - YouTube"
+            title = re.sub(r'\s*[-–—|]\s*YouTube.*$', '', title, flags=re.IGNORECASE)
+            return title if title else None
+    except Exception:
+        pass
+    return None
+
+
 def create_folder(url: str) -> str:
     """Create folder and return its path."""
     video_id = extract_video_id(url)
@@ -116,10 +150,13 @@ def create_folder(url: str) -> str:
         title = extract_title_with_youget(url)
 
     if not title:
+        title = extract_title_from_webpage(url)
+
+    if not title:
         title = video_id
 
-    # Build folder name: first 30 chars of title + video_id
-    title_part = sanitize_filename(title)[:30]
+    # Build folder name: first 60 chars of title + video_id
+    title_part = sanitize_filename(title)[:60]
     folder_name = f"{title_part}_{video_id}"
 
     # Create folder in notes/ directory (project root level)
