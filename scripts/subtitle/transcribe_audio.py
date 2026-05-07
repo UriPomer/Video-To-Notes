@@ -209,7 +209,7 @@ def _run_whisper_isolated(
 
 
 
-def run_whisper(video_file: str, model_size: str = 'large-v3') -> Tuple[List[Dict], str]:
+def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cpu') -> Tuple[List[Dict], str]:
     """Transcribe video audio with faster-whisper.
 
     Returns (segments, detected_language).
@@ -217,20 +217,23 @@ def run_whisper(video_file: str, model_size: str = 'large-v3') -> Tuple[List[Dic
     Raises RuntimeError if faster-whisper isn't installed or ffmpeg extract
     fails. Caller decides whether to fall back to image_primary.
     """
-    # GPU failures on Windows can terminate the Python process inside native
-    # code before Python raises an exception. Run the GPU path in an isolated
-    # worker so the parent process can always fall back to CPU cleanly.
-    print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
-    try:
-        return _run_whisper_isolated(video_file, model_size, 'cuda', 'float16')
-    except RuntimeError as gpu_err:
-        print(
-            f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
-            file=sys.stderr,
-            flush=True,
-        )
-        print(f"[transcribe_audio] loading whisper model on CPU ({model_size})...", flush=True)
-        return _run_whisper_in_process(video_file, model_size, 'cpu', 'int8')
+    if device == 'cuda':
+        # GPU failures on Windows can terminate the Python process inside native
+        # code before Python raises an exception. Run the GPU path in an isolated
+        # worker so the parent process can always fall back to CPU cleanly.
+        print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
+        try:
+            return _run_whisper_isolated(video_file, model_size, 'cuda', 'float16')
+        except RuntimeError as gpu_err:
+            print(
+                f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
+                file=sys.stderr,
+                flush=True,
+            )
+            device = 'cpu'
+
+    print(f"[transcribe_audio] loading whisper model on CPU ({model_size})...", flush=True)
+    return _run_whisper_in_process(video_file, model_size, 'cpu', 'int8')
 
 
 # ----------------------------------------------------------------------
@@ -296,7 +299,7 @@ def locate_video_file(video_folder: str) -> Optional[str]:
     return None
 
 
-def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
+def transcribe(video_folder: str, whisper_model: str = 'large-v3', device: str = 'cpu') -> Dict:
     enable_live_logs()
     video_folder = os.path.abspath(video_folder)
     video_file = locate_video_file(video_folder)
@@ -318,7 +321,7 @@ def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
     if not segments and video_file:
         print(f"[transcribe_audio] no platform subtitle; running whisper ({whisper_model})...", flush=True)
         try:
-            segments, lang = run_whisper(video_file, model_size=whisper_model)
+            segments, lang = run_whisper(video_file, model_size=whisper_model, device=device)
             source = 'whisper_local'
         except RuntimeError as e:
             print(f"[transcribe_audio] whisper unavailable: {e}", file=sys.stderr, flush=True)
@@ -372,8 +375,10 @@ def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
 def main():
     parser = argparse.ArgumentParser(description='Produce subtitles.json with mode decision')
     parser.add_argument('video_folder', nargs='?', help='Folder containing video.mp4 and (optional) video.<lang>.vtt')
-    parser.add_argument('--whisper-model', default='large-v3',
-                        help='faster-whisper model size (tiny/base/small/medium/large-v3). Default: large-v3')
+    parser.add_argument('--whisper-model', default='medium',
+                        help='faster-whisper model size (tiny/base/small/medium/large-v3). Default: medium')
+    parser.add_argument('--device', default='cpu',
+                        help='Device to run whisper on: cpu or cuda. Default: cpu')
     parser.add_argument('--internal-whisper', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--video-file', help=argparse.SUPPRESS)
     parser.add_argument('--device', help=argparse.SUPPRESS)
@@ -396,7 +401,7 @@ def main():
 
     if not args.video_folder:
         parser.error('video_folder is required unless --internal-whisper is set')
-    transcribe(args.video_folder, whisper_model=args.whisper_model)
+    transcribe(args.video_folder, whisper_model=args.whisper_model, device=args.device)
 
 
 if __name__ == '__main__':

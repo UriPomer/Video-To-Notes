@@ -38,7 +38,8 @@ def run_workflow(url: str, ppt_mode: bool = False, interval: int = 30,
                  threshold: float = 0.03, max_depth: int = 6,
                  initial_interval: int = 10, key_frames: int = 100,
                  no_key_select: bool = False, no_filter: bool = False,
-                 whisper_model: str = 'large-v3', force_image_mode: bool = False):
+                 whisper_model: str = 'medium', device: str = 'cpu',
+                 force_image_mode: bool = False):
     """Run complete video summarization workflow.
 
     Two possible paths, decided by subtitles.json.mode:
@@ -72,7 +73,7 @@ def run_workflow(url: str, ppt_mode: bool = False, interval: int = 30,
 
     # Step 3: Transcribe — platform CC or whisper fallback; decides mode
     print("\n[3/7] Transcribing audio / reading subtitles...")
-    subs = transcribe(folder, whisper_model=whisper_model)
+    subs = transcribe(folder, whisper_model=whisper_model, device=device)
     mode = subs['mode']
     if force_image_mode and mode == 'subtitle_primary':
         print("  --force-image-mode set: overriding subtitle_primary → image_primary")
@@ -176,8 +177,10 @@ Examples:
                         help='Skip key frame selection, use all frames')
     parser.add_argument('--no-filter', action='store_true',
                         help='Skip uninformative-frame filter step')
-    parser.add_argument('--whisper-model', default='large-v3',
-                        help='faster-whisper model size if subtitle falls back to ASR (default: large-v3)')
+    parser.add_argument('--whisper-model', default='medium',
+                        help='faster-whisper model size if subtitle falls back to ASR (default: medium)')
+    parser.add_argument('--device', default='cpu',
+                        help='Device for whisper: cpu or cuda (default: cpu)')
     parser.add_argument('--force-image-mode', action='store_true',
                         help='Ignore subtitles and force the image-primary pipeline')
 
@@ -193,5 +196,6 @@ Examples:
         no_key_select=args.no_key_select,
         no_filter=args.no_filter,
         whisper_model=args.whisper_model,
+        device=args.device,
         force_image_mode=args.force_image_mode,
     )
