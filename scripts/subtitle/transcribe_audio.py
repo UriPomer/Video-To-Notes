@@ -381,7 +381,6 @@ def main():
                         help='Device to run whisper on: cpu or cuda. Default: cpu')
     parser.add_argument('--internal-whisper', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--video-file', help=argparse.SUPPRESS)
-    parser.add_argument('--device', help=argparse.SUPPRESS)
     parser.add_argument('--compute-type', help=argparse.SUPPRESS)
     parser.add_argument('--output-json', help=argparse.SUPPRESS)
     args = parser.parse_args()
