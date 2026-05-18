@@ -17,6 +17,14 @@ import numpy as np
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
+
+from common.utils import probe_duration, capture_frame_ffmpeg  # noqa: E402
+
 
 @dataclass
 class FrameInfo:
@@ -48,11 +56,10 @@ def get_video_info(video_path: str) -> Tuple[float, float, int, int]:
     if not cap.isOpened():
         return 0, 0, 0, 0
     fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    duration = total_frames / fps if fps > 0 else 0
     cap.release()
+    duration = probe_duration(video_path)
     return duration, fps, width, height
 
 
@@ -101,21 +108,6 @@ def calculate_region_diff(frame1: np.ndarray, frame2: np.ndarray,
 
     return score
 
-
-def capture_frame_ffmpeg(video_path: str, ts: float, output_file: str,
-                         scale: int = 800) -> bool:
-    """Capture a single frame using ffmpeg with HD quality."""
-    cmd = [
-        'ffmpeg', '-y', '-ss', str(ts), '-i', video_path,
-        '-vframes', '1', '-q:v', '1',
-        '-vf', f'scale={scale}:-1',
-        output_file
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, check=True)
-        return os.path.exists(output_file)
-    except Exception:
-        return False
 
 
 def load_frame_cv(video_path: str, ts: float, fps: float) -> Optional[np.ndarray]:

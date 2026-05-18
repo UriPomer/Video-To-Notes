@@ -8,6 +8,8 @@ import sys
 import os
 import re
 import json
+import shutil
+import subprocess
 import urllib.parse
 import urllib.request
 
@@ -72,10 +74,6 @@ def get_project_root() -> str:
 
 def extract_title_with_youget(url: str) -> str | None:
     """Try to get video title using you-get --json."""
-    import shutil
-    import subprocess
-    import json
-
     if not shutil.which('you-get'):
         return None
 

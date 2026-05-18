@@ -32,6 +32,7 @@ from capture.capture_ppt_frames import capture_ppt_frames
 from capture.filter_frames import filter_frames
 from capture.select_key_frames import select_key_frames
 from pass2_scaffold.generate_notes import generate_notes
+from common.utils import locate_video_file  # noqa: E402
 
 
 def run_workflow(url: str, ppt_mode: bool = False, interval: int = 30,
@@ -60,12 +61,7 @@ def run_workflow(url: str, ppt_mode: bool = False, interval: int = 30,
     metadata = download_video(url, folder)
 
     # Find video file
-    video_file = None
-    for ext in ['mp4', 'webm', 'mkv', 'flv']:
-        candidate = os.path.join(folder, f'video.{ext}')
-        if os.path.exists(candidate):
-            video_file = candidate
-            break
+    video_file = locate_video_file(folder)
 
     if not video_file:
         print("Error: Video file not found after download", file=sys.stderr)

@@ -36,7 +36,7 @@ _SCRIPTS_ROOT = os.path.dirname(_HERE)
 if _SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, _SCRIPTS_ROOT)
 
-from common.utils import format_ts, load_json, classify, load_gray  # noqa: E402
+from common.utils import format_ts, load_json, classify, load_gray, locate_video_file  # noqa: E402
 
 
 PRIORITY_RANK = {'high': 3, 'medium': 2, 'low': 1}
@@ -264,12 +264,7 @@ def main():
         sys.exit(1)
 
     # Locate video file
-    video_file = None
-    for ext in ('mp4', 'webm', 'mkv', 'flv'):
-        cand = os.path.join(video_folder, f'video.{ext}')
-        if os.path.exists(cand):
-            video_file = cand
-            break
+    video_file = locate_video_file(video_folder)
     if not video_file:
         print(f"Error: video.mp4/webm/mkv/flv not found in {video_folder}",
               file=sys.stderr)

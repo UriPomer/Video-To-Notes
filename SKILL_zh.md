@@ -91,6 +91,16 @@ python {baseDir}/scripts/capture/select_key_frames.py "<folder>/screenshots"
 python {baseDir}/scripts/pass2_scaffold/generate_notes.py "<folder>" --ppt
 ```
 
+### Step 6 — 清理未引用截图
+
+Pass 2 写完 notes.md 后，screenshots/ 里往往有大量笔记中并未引用的帧。运行此脚本删除无用图片、节省空间：
+
+```powershell
+python {baseDir}/scripts/pass2_scaffold/prune_screenshots.py "<folder>"
+```
+
+加 `--dry-run` 可先预览不实际删除。
+
 Phase A 完成，进入 Phase B。
 
 ## 核心规则
@@ -205,5 +215,5 @@ scripts/
 ├── pass1_subtitle/    plan_batches, extract_key_moments
 ├── pass1_image/       plan_batches
 ├── pass15_gaps/       resolve_gaps
-└── pass2_scaffold/    generate_notes（草稿；Pass 2 主体无脚本）
+└── pass2_scaffold/    generate_notes（草稿；Pass 2 主体无脚本）, prune_screenshots
 ```

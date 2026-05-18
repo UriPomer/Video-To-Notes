@@ -9,32 +9,16 @@ Usage: python generate_notes.py <folder_path> [--ppt]
 import sys
 import os
 import json
-import re
 from datetime import datetime
 from typing import List, Dict, Optional
 
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
 
-def format_timestamp(seconds: float) -> str:
-    """Format seconds as MM:SS or HH:MM:SS."""
-    seconds = int(seconds)
-    hrs = seconds // 3600
-    mins = (seconds % 3600) // 60
-    secs = seconds % 60
-    if hrs > 0:
-        return f"{hrs}:{mins:02d}:{secs:02d}"
-    return f"{mins:02d}:{secs:02d}"
-
-
-def parse_frame_timestamp(filename: str) -> Optional[float]:
-    match = re.search(r'frame_(\d+)_(\d+)', filename)
-    if match:
-        secs = int(match.group(1))
-        cents = int(match.group(2))
-        return secs + cents / 100.0
-    match = re.search(r'frame_(\d+)', filename)
-    if match:
-        return float(match.group(1))
-    return None
+from common.utils import format_ts as format_timestamp, parse_frame_timestamp  # noqa: E402
 
 
 def load_key_frames(folder_path: str) -> Optional[Dict]:
@@ -46,12 +30,9 @@ def load_key_frames(folder_path: str) -> Optional[Dict]:
     return None
 
 
-def list_all_screenshots(folder_path: str, ppt_mode: bool = False) -> List[Dict]:
+def list_all_screenshots(folder_path: str) -> List[Dict]:
     """List all screenshots with metadata."""
-    if ppt_mode:
-        screenshots_dir = os.path.join(folder_path, 'screenshots')
-    else:
-        screenshots_dir = os.path.join(folder_path, 'screenshots')
+    screenshots_dir = os.path.join(folder_path, 'screenshots')
 
     if not os.path.exists(screenshots_dir):
         return []
@@ -109,7 +90,7 @@ def generate_notes(folder_path: str, ppt_mode: bool = False) -> str:
     if key_frames_data:
         screenshots_dir = key_frames_data.get('folder', '')
         key_filenames = {f['filename'] for f in key_frames_data.get('frames', [])}
-        all_screenshots = list_all_screenshots(folder_path, ppt_mode)
+        all_screenshots = list_all_screenshots(folder_path)
         screenshots = [s for s in all_screenshots if s['filename'] in key_filenames]
         screenshots.sort(key=lambda x: x['timestamp'])
         selection_info = f"Key frames ({len(screenshots)} selected from {key_frames_data.get('total_frames', 0)})"

@@ -6,12 +6,68 @@ don't need to cross-import from each other.
 
 import json
 import os
+import re
+import subprocess
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 # ----------------------------------------------------------------------
-# Timestamp + JSON helpers (originally in plan_pass1_batches.py)
+# Video file helpers
+# ----------------------------------------------------------------------
+
+VIDEO_EXTENSIONS = ('mp4', 'webm', 'mkv', 'flv')
+
+
+def locate_video_file(video_folder: str) -> Optional[str]:
+    """Find video.* in the given folder, trying common extensions."""
+    for ext in VIDEO_EXTENSIONS:
+        p = os.path.join(video_folder, f'video.{ext}')
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def probe_duration(video_file: str) -> float:
+    """Use ffprobe to get video duration in seconds. Returns 0.0 on failure."""
+    cmd = [
+        'ffprobe', '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        video_file,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return 0.0
+
+
+def capture_frame_ffmpeg(video_path: str, ts: float, output_file: str,
+                         scale: int = 0) -> bool:
+    """Capture a single frame using ffmpeg.
+
+    If scale > 0, output is resized to that width; otherwise original size.
+    """
+    cmd = [
+        'ffmpeg', '-y', '-ss', str(ts),
+        '-i', video_path,
+        '-vframes', '1',
+    ]
+    if scale > 0:
+        cmd += ['-vf', f'scale={scale}:-1', '-q:v', '1']
+    else:
+        cmd += ['-q:v', '2']
+    cmd.append(output_file)
+    try:
+        subprocess.run(cmd, capture_output=True, check=True)
+        return os.path.exists(output_file)
+    except subprocess.CalledProcessError:
+        return False
+
+
+# ----------------------------------------------------------------------
+# Timestamp + JSON helpers
 # ----------------------------------------------------------------------
 
 def format_ts(sec: float) -> str:
@@ -34,9 +90,36 @@ def load_json(path: str, default):
 
 
 # ----------------------------------------------------------------------
-# Image classification helpers (originally in filter_uninformative_frames.py)
-# Lazy-import opencv/numpy so pure-text scripts (plan_subtitle_pass1 etc.)
-# don't pay the import cost.
+# Filename timestamp parsing
+# ----------------------------------------------------------------------
+
+_FRAME_TS_RE = re.compile(r'frame_(\d+)_(\d+)')
+_FRAME_TS_SIMPLE_RE = re.compile(r'frame_(\d+)')
+
+
+def parse_frame_timestamp(filename: str) -> Optional[float]:
+    """Extract timestamp in seconds from a screenshot filename.
+
+    Supports: frame_NNNN_MM.jpg, frame_NNNN.jpg, gap_SSSS_EEEE_NNN.jpg
+    """
+    m = _FRAME_TS_RE.search(filename)
+    if m:
+        return int(m.group(1)) + int(m.group(2)) / 100.0
+    m = _FRAME_TS_SIMPLE_RE.search(filename)
+    if m:
+        return float(m.group(1))
+    # gap_0320_0400_003.jpg — approximate for sort ordering
+    gm = re.match(r'gap_(\d+)_(\d+)_(\d+)\.jpg$', filename)
+    if gm:
+        start = int(gm.group(1))
+        idx = int(gm.group(3))
+        return float(start) + (idx - 1) * 2
+    return None
+
+
+# ----------------------------------------------------------------------
+# Image classification helpers
+# Lazy-import opencv/numpy so pure-text scripts don't pay the import cost.
 # ----------------------------------------------------------------------
 
 # Tuned against the Phasmophobia / Nikki sample sets.

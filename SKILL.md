@@ -91,6 +91,17 @@ No frame capture needed.
 python {baseDir}/scripts/pass2_scaffold/generate_notes.py "<folder>" --ppt
 ```
 
+### Step 6 — Prune unreferenced screenshots
+
+After Pass 2 writes notes.md, screenshots/ often contains far more frames than the
+notes actually reference. Run this to delete unused images and save disk space:
+
+```powershell
+python {baseDir}/scripts/pass2_scaffold/prune_screenshots.py "<folder>"
+```
+
+Add `--dry-run` first to preview without deleting.
+
 Phase A complete. Proceed to Phase B.
 
 ## Core Rules
@@ -205,5 +216,5 @@ scripts/
 ├── pass1_subtitle/    plan_batches, extract_key_moments
 ├── pass1_image/       plan_batches
 ├── pass15_gaps/       resolve_gaps
-└── pass2_scaffold/    generate_notes (draft only; Pass 2 main body has no script)
+└── pass2_scaffold/    generate_notes (draft only; Pass 2 main body has no script), prune_screenshots
 ```
