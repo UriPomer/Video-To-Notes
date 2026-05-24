@@ -30,22 +30,17 @@ Output format (key_frames.json):
 import os
 import sys
 import json
-import re
 import argparse
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
 
-def parse_frame_timestamp(filename: str) -> Optional[float]:
-    match = re.search(r'frame_(\d+)_(\d+)', filename)
-    if match:
-        secs = int(match.group(1))
-        cents = int(match.group(2))
-        return secs + cents / 100.0
-    match = re.search(r'frame_(\d+)', filename)
-    if match:
-        return float(match.group(1))
-    return None
+from common.utils import parse_frame_timestamp  # noqa: E402
 
 
 def parse_diff_from_json(diffs_path: str) -> Dict[str, float]:
@@ -71,7 +66,7 @@ def estimate_text_density(image_path: str) -> float:
         # Empty/dark slide is 20-40KB
         density = min(size / 100000.0, 2.0)  # Cap at 2.0
         return density
-    except:
+    except Exception:
         return 0.5
 
 

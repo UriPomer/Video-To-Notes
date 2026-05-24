@@ -32,39 +32,8 @@ _SCRIPTS_ROOT = os.path.dirname(_HERE)
 if _SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, _SCRIPTS_ROOT)
 
-from common.utils import format_ts, load_json  # noqa: E402
+from common.utils import format_ts, load_json, parse_frame_timestamp  # noqa: E402
 
-
-def parse_ts_from_filename(fn: str):
-    """Parse timestamp (seconds) from a screenshot filename.
-
-    Supported formats:
-      - frame_NNNN_MM.jpg   -> N.MM seconds (PPT capture output)
-      - frame_NNNN.jpg      -> N seconds    (legacy fixed-interval output)
-      - gap_SSSS_EEEE_III.jpg -> SSSS + (III-1) * 2 seconds, estimated
-        (gap files use a frame index relative to their range; we approximate
-        with a default 0.5 fps step = 2 seconds, good enough for sort order)
-    """
-    import re
-    m = re.match(r'frame_(\d+)_(\d+)\.jpg$', fn)
-    if m:
-        return int(m.group(1)) + int(m.group(2)) / 100.0
-    m = re.match(r'frame_(\d+)\.jpg$', fn)
-    if m:
-        return float(m.group(1))
-    m = re.match(r'gap_(\d+)_(\d+)_(\d+)\.jpg$', fn)
-    if m:
-        # gap_SSSS_EEEE_NNN: start at SSSS seconds, frame index NNN.
-        # Use the midpoint of SSSS..EEEE scaled by index ratio for stable
-        # chronological ordering. This is an approximation; exact fps is
-        # known only by resolve_gaps.py.
-        start = int(m.group(1))
-        end = int(m.group(2))
-        idx = int(m.group(3))
-        span = max(1, end - start)
-        # Cap idx contribution so early indices land near start
-        return float(start) + min(span - 1, (idx - 1) * 2)
-    return None
 
 
 def build_batches(video_folder: str, n_batches: int, use_all_frames: bool = True) -> Dict:
@@ -90,7 +59,7 @@ def build_batches(video_folder: str, n_batches: int, use_all_frames: bool = True
         ]
         frames = []
         for fn in all_files:
-            ts = parse_ts_from_filename(fn)
+            ts = parse_frame_timestamp(fn)
             if ts is None:
                 continue
             frames.append({'filename': fn, 'timestamp': ts})

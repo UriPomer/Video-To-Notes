@@ -27,24 +27,22 @@ def write_vtt(path: Path, text: str) -> None:
 def test_run_whisper_falls_back_to_cpu_when_gpu_worker_fails(monkeypatch, capsys):
     module = load_module()
 
-    def fake_run_whisper_isolated(video_file, model_size, device, compute_type):
-        assert video_file == 'video.mp4'
-        assert model_size == 'tiny'
-        assert device == 'cuda'
-        assert compute_type == 'float16'
-        raise RuntimeError('gpu worker exited with code 1')
-
     def fake_run_whisper_in_process(video_file, model_size, device, compute_type):
+        if device == 'cuda':
+            assert video_file == 'video.mp4'
+            assert model_size == 'tiny'
+            assert compute_type == 'float16'
+            raise RuntimeError('gpu worker exited with code 1')
+        # CPU path
         assert video_file == 'video.mp4'
         assert model_size == 'tiny'
         assert device == 'cpu'
         assert compute_type == 'int8'
         return ([{'start': 0.0, 'end': 1.0, 'text': 'CPU fallback transcript'}], 'zh')
 
-    monkeypatch.setattr(module, '_run_whisper_isolated', fake_run_whisper_isolated)
     monkeypatch.setattr(module, '_run_whisper_in_process', fake_run_whisper_in_process)
 
-    segments, lang = module.run_whisper('video.mp4', model_size='tiny')
+    segments, lang = module.run_whisper('video.mp4', model_size='tiny', device='cuda')
 
     captured = capsys.readouterr()
     assert lang == 'zh'

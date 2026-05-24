@@ -9,37 +9,15 @@ Usage:
 
 import sys
 import os
-import subprocess
 import argparse
 
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
 
-def get_video_duration(video_path: str) -> float:
-    """Get video duration in seconds using ffprobe."""
-    try:
-        result = subprocess.run(
-            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-             '-of', 'default=noprint_wrappers=1:nokey=1', video_path],
-            capture_output=True, text=True, check=True
-        )
-        return float(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return 0.0
-
-
-def capture_frame_ffmpeg(video_path: str, timestamp: float, output_file: str) -> bool:
-    """Capture a single frame using ffmpeg."""
-    cmd = [
-        'ffmpeg', '-y', '-ss', str(timestamp),
-        '-i', video_path,
-        '-vframes', '1',
-        '-q:v', '2',
-        output_file
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, check=True)
-        return os.path.exists(output_file)
-    except subprocess.CalledProcessError:
-        return False
+from common.utils import probe_duration as get_video_duration, capture_frame_ffmpeg  # noqa: E402
 
 
 def capture_frames_fixed(video_path: str, output_folder: str, interval: int = 30):

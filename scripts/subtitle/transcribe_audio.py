@@ -24,8 +24,15 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from typing import Dict, List, Optional, Tuple
+
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
+
+from common.utils import locate_video_file, probe_duration  # noqa: E402
 
 
 # Sparsity thresholds — promoted to constants for future tuning.
@@ -167,49 +174,7 @@ def _run_whisper_in_process(
 
 
 
-def _run_whisper_isolated(
-    video_file: str,
-    model_size: str,
-    device: str,
-    compute_type: str,
-) -> Tuple[List[Dict], str]:
-    fd, output_json = tempfile.mkstemp(prefix='whisper_', suffix='.json')
-    os.close(fd)
-    try:
-        cmd = [
-            sys.executable,
-            os.path.abspath(__file__),
-            '--internal-whisper',
-            '--video-file',
-            video_file,
-            '--whisper-model',
-            model_size,
-            '--device',
-            device,
-            '--compute-type',
-            compute_type,
-            '--output-json',
-            output_json,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            detail = (
-                result.stderr.strip()
-                or result.stdout.strip()
-                or f'worker exited with code {result.returncode}'
-            )
-            raise RuntimeError(detail)
-
-        with open(output_json, 'r', encoding='utf-8') as f:
-            payload = json.load(f)
-        return payload['segments'], payload['language']
-    finally:
-        if os.path.exists(output_json):
-            os.unlink(output_json)
-
-
-
-def run_whisper(video_file: str, model_size: str = 'large-v3') -> Tuple[List[Dict], str]:
+def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cpu') -> Tuple[List[Dict], str]:
     """Transcribe video audio with faster-whisper.
 
     Returns (segments, detected_language).
@@ -217,41 +182,20 @@ def run_whisper(video_file: str, model_size: str = 'large-v3') -> Tuple[List[Dic
     Raises RuntimeError if faster-whisper isn't installed or ffmpeg extract
     fails. Caller decides whether to fall back to image_primary.
     """
-    # GPU failures on Windows can terminate the Python process inside native
-    # code before Python raises an exception. Run the GPU path in an isolated
-    # worker so the parent process can always fall back to CPU cleanly.
-    print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
-    try:
-        return _run_whisper_isolated(video_file, model_size, 'cuda', 'float16')
-    except RuntimeError as gpu_err:
-        print(
-            f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
-            file=sys.stderr,
-            flush=True,
-        )
-        print(f"[transcribe_audio] loading whisper model on CPU ({model_size})...", flush=True)
-        return _run_whisper_in_process(video_file, model_size, 'cpu', 'int8')
+    if device == 'cuda':
+        print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
+        try:
+            return _run_whisper_in_process(video_file, model_size, 'cuda', 'float16')
+        except RuntimeError as gpu_err:
+            print(
+                f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
+                file=sys.stderr,
+                flush=True,
+            )
+            device = 'cpu'
 
-
-# ----------------------------------------------------------------------
-# Video duration (for coverage math)
-# ----------------------------------------------------------------------
-
-def probe_duration(video_file: str) -> float:
-    """Use ffprobe to get video duration in seconds."""
-    cmd = [
-        'ffprobe', '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        video_file,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return 0.0
-    try:
-        return float(result.stdout.strip())
-    except ValueError:
-        return 0.0
+    print(f"[transcribe_audio] loading whisper model on CPU ({model_size})...", flush=True)
+    return _run_whisper_in_process(video_file, model_size, 'cpu', 'int8')
 
 
 # ----------------------------------------------------------------------
@@ -288,15 +232,7 @@ def evaluate_sparsity(segments: List[Dict], duration_sec: float) -> Dict:
 # Entry
 # ----------------------------------------------------------------------
 
-def locate_video_file(video_folder: str) -> Optional[str]:
-    for ext in ('mp4', 'webm', 'mkv', 'flv'):
-        p = os.path.join(video_folder, f'video.{ext}')
-        if os.path.exists(p):
-            return p
-    return None
-
-
-def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
+def transcribe(video_folder: str, whisper_model: str = 'large-v3', device: str = 'cpu') -> Dict:
     enable_live_logs()
     video_folder = os.path.abspath(video_folder)
     video_file = locate_video_file(video_folder)
@@ -318,7 +254,7 @@ def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
     if not segments and video_file:
         print(f"[transcribe_audio] no platform subtitle; running whisper ({whisper_model})...", flush=True)
         try:
-            segments, lang = run_whisper(video_file, model_size=whisper_model)
+            segments, lang = run_whisper(video_file, model_size=whisper_model, device=device)
             source = 'whisper_local'
         except RuntimeError as e:
             print(f"[transcribe_audio] whisper unavailable: {e}", file=sys.stderr, flush=True)
@@ -372,31 +308,15 @@ def transcribe(video_folder: str, whisper_model: str = 'large-v3') -> Dict:
 def main():
     parser = argparse.ArgumentParser(description='Produce subtitles.json with mode decision')
     parser.add_argument('video_folder', nargs='?', help='Folder containing video.mp4 and (optional) video.<lang>.vtt')
-    parser.add_argument('--whisper-model', default='large-v3',
-                        help='faster-whisper model size (tiny/base/small/medium/large-v3). Default: large-v3')
-    parser.add_argument('--internal-whisper', action='store_true', help=argparse.SUPPRESS)
-    parser.add_argument('--video-file', help=argparse.SUPPRESS)
-    parser.add_argument('--device', help=argparse.SUPPRESS)
-    parser.add_argument('--compute-type', help=argparse.SUPPRESS)
-    parser.add_argument('--output-json', help=argparse.SUPPRESS)
+    parser.add_argument('--whisper-model', default='medium',
+                        help='faster-whisper model size (tiny/base/small/medium/large-v3). Default: medium')
+    parser.add_argument('--device', default='cpu',
+                        help='Device to run whisper on: cpu or cuda. Default: cpu')
     args = parser.parse_args()
 
-    if args.internal_whisper:
-        if not all([args.video_file, args.device, args.compute_type, args.output_json]):
-            parser.error('--internal-whisper requires --video-file, --device, --compute-type, and --output-json')
-        segments, language = _run_whisper_in_process(
-            args.video_file,
-            args.whisper_model,
-            args.device,
-            args.compute_type,
-        )
-        with open(args.output_json, 'w', encoding='utf-8') as f:
-            json.dump({'segments': segments, 'language': language}, f, ensure_ascii=False)
-        return
-
     if not args.video_folder:
-        parser.error('video_folder is required unless --internal-whisper is set')
-    transcribe(args.video_folder, whisper_model=args.whisper_model)
+        parser.error('video_folder is required')
+    transcribe(args.video_folder, whisper_model=args.whisper_model, device=args.device)
 
 
 if __name__ == '__main__':

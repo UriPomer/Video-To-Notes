@@ -21,20 +21,13 @@ import subprocess
 import sys
 from typing import Dict, List
 
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
 
-def load_json(path: str, default):
-    if not os.path.exists(path):
-        return default
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-def locate_video_file(video_folder: str):
-    for ext in ('mp4', 'webm', 'mkv', 'flv'):
-        p = os.path.join(video_folder, f'video.{ext}')
-        if os.path.exists(p):
-            return p
-    return None
+from common.utils import load_json, locate_video_file  # noqa: E402
 
 
 def dedupe_and_sort(moments: List[Dict], min_gap: float) -> List[Dict]:

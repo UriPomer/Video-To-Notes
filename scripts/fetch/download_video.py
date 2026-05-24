@@ -18,10 +18,37 @@ import json
 import re
 import subprocess
 import shutil
+from typing import Dict, Tuple
+
+# Add scripts/ root so common.utils is importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_ROOT = os.path.dirname(_HERE)
+if _SCRIPTS_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPTS_ROOT)
+
+from common.utils import locate_video_file  # noqa: E402
 
 
-def download_with_ytdlp(url: str, output_folder: str) -> dict:
-    """Download using yt-dlp."""
+def _extract_metadata_fields(info: dict, url: str) -> dict:
+    """Pull standard metadata fields from a yt-dlp info dict."""
+    return {
+        'title': info.get('title', ''),
+        'description': info.get('description', ''),
+        'uploader': info.get('uploader', ''),
+        'uploader_id': info.get('uploader_id', ''),
+        'upload_date': info.get('upload_date', ''),
+        'duration': info.get('duration', 0),
+        'view_count': info.get('view_count', 0),
+        'like_count': info.get('like_count', 0),
+        'webpage_url': info.get('webpage_url', url),
+        'thumbnail': info.get('thumbnail', ''),
+        'tags': info.get('tags', []),
+        'categories': info.get('categories', []),
+    }
+
+
+def download_with_ytdlp(url: str, output_folder: str) -> Tuple[dict, str]:
+    """Download using yt-dlp. Returns (metadata, video_file_path)."""
     try:
         import yt_dlp
     except ImportError:
@@ -50,32 +77,14 @@ def download_with_ytdlp(url: str, output_folder: str) -> dict:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
 
-        metadata = {
-            'title': info.get('title', ''),
-            'description': info.get('description', ''),
-            'uploader': info.get('uploader', ''),
-            'uploader_id': info.get('uploader_id', ''),
-            'upload_date': info.get('upload_date', ''),
-            'duration': info.get('duration', 0),
-            'view_count': info.get('view_count', 0),
-            'like_count': info.get('like_count', 0),
-            'webpage_url': info.get('webpage_url', url),
-            'thumbnail': info.get('thumbnail', ''),
-            'tags': info.get('tags', []),
-            'categories': info.get('categories', []),
-        }
+        metadata = _extract_metadata_fields(info, url)
 
         metadata_path = os.path.join(output_folder, 'metadata.json')
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
 
         # Find video file
-        video_file = None
-        for ext in ['mp4', 'webm', 'mkv', 'flv']:
-            candidate = os.path.join(output_folder, f'video.{ext}')
-            if os.path.exists(candidate):
-                video_file = candidate
-                break
+        video_file = locate_video_file(output_folder)
 
         # Rename thumbnail
         for ext in ['jpg', 'webp', 'png']:
@@ -88,8 +97,8 @@ def download_with_ytdlp(url: str, output_folder: str) -> dict:
         return metadata, video_file
 
 
-def download_with_youget(url: str, output_folder: str) -> dict:
-    """Download Bilibili video using you-get."""
+def download_with_youget(url: str, output_folder: str) -> Tuple[dict, str]:
+    """Download Bilibili video using you-get. Returns (metadata, video_file_path)."""
     if not shutil.which('you-get'):
         raise RuntimeError("you-get not installed. Run: pip install you-get")
 
@@ -176,20 +185,7 @@ def extract_metadata_only(url: str) -> dict:
         ydl_opts = {'quiet': True, 'skip_download': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            return {
-                'title': info.get('title', ''),
-                'description': info.get('description', ''),
-                'uploader': info.get('uploader', ''),
-                'uploader_id': info.get('uploader_id', ''),
-                'upload_date': info.get('upload_date', ''),
-                'duration': info.get('duration', 0),
-                'view_count': info.get('view_count', 0),
-                'like_count': info.get('like_count', 0),
-                'webpage_url': info.get('webpage_url', url),
-                'thumbnail': info.get('thumbnail', ''),
-                'tags': info.get('tags', []),
-                'categories': info.get('categories', []),
-            }
+            return _extract_metadata_fields(info, url)
     except Exception:
         return {
             'title': '', 'description': '', 'uploader': '',
@@ -233,7 +229,6 @@ def download_video(url: str, output_folder: str) -> dict:
 
 
 if __name__ == '__main__':
-    import re
     if len(sys.argv) < 3:
         print("Usage: python download_video.py <video_url> <output_folder>", file=sys.stderr)
         sys.exit(1)
