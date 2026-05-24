@@ -95,7 +95,7 @@ def generate_notes(folder_path: str, ppt_mode: bool = False) -> str:
         screenshots.sort(key=lambda x: x['timestamp'])
         selection_info = f"Key frames ({len(screenshots)} selected from {key_frames_data.get('total_frames', 0)})"
     else:
-        screenshots = list_all_screenshots(folder_path, ppt_mode)
+        screenshots = list_all_screenshots(folder_path)
         selection_info = f"All frames ({len(screenshots)})"
 
     # Extract info
