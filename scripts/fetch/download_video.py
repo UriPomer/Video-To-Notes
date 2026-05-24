@@ -6,8 +6,14 @@ Uses yt-dlp by default, falls back to you-get for Bilibili (avoids 412 errors).
 Usage: python download_video.py <video_url> <output_folder>
 """
 
-import sys
 import os
+import sys
+
+# Prevent GBK decode errors in subprocess reader threads on Windows.
+# Without this, yt-dlp's internal subprocess._readerthread uses the system
+# locale (GBK on Chinese Windows) and crashes when encountering UTF-8
+# characters in subprocess output.
+os.environ['PYTHONIOENCODING'] = 'utf-8'
 import json
 import re
 import subprocess
@@ -24,7 +30,9 @@ def download_with_ytdlp(url: str, output_folder: str) -> dict:
     os.makedirs(output_folder, exist_ok=True)
 
     ydl_opts = {
-        'format': 'best',
+        # bestvideo+bestaudio handles DASH-separated streams (Bilibili,
+        # modern YouTube). Falls back to 'best' for single-file sources.
+        'format': 'bestvideo+bestaudio/best',
         'outtmpl': os.path.join(output_folder, 'video.%(ext)s'),
         'writeinfojson': True,
         'writethumbnail': True,

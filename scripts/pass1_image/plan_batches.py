@@ -224,6 +224,14 @@ def print_prompts(plan: Dict) -> None:
     }
   ]
 }""")
+        print()
+        print("CRITICAL — your ENTIRE response must be the JSON object above and nothing else:")
+        print("  - NO introductory sentence like 'Here is the analysis...'")
+        print("  - NO closing remarks like 'Key findings:...'")
+        print("  - NO markdown code fences (```json ... ```)")
+        print("  - NO file writes — return the JSON inline in your response")
+        print("  - The first character of your response must be '{'")
+        print("  - The last character of your response must be '}'")
         print("---")
         print()
 

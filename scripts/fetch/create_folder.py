@@ -60,11 +60,14 @@ def extract_video_id(url: str) -> str:
     return "unknown"
 
 
+_PROJECT_MARKERS = ('.claude', '.codebuddy', '.cursor', '.codex')
+
+
 def get_project_root() -> str:
-    """Find project root by looking for .codebuddy directory."""
+    """Find project root by looking for an IDE/agent config directory."""
     current = os.path.dirname(os.path.abspath(__file__))
     while current != os.path.dirname(current):
-        if os.path.exists(os.path.join(current, '.codebuddy')):
+        if any(os.path.exists(os.path.join(current, m)) for m in _PROJECT_MARKERS):
             return current
         current = os.path.dirname(current)
     return os.getcwd()
@@ -131,8 +134,19 @@ def extract_title_from_webpage(url: str) -> str | None:
     return None
 
 
+def _ensure_utf8_stdout():
+    """Reconfigure stdout for UTF-8 so non-ASCII folder names survive
+    shells that default to GBK (Git Bash on Windows)."""
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='surrogateescape')
+        except Exception:
+            pass
+
+
 def create_folder(url: str) -> str:
     """Create folder and return its path."""
+    _ensure_utf8_stdout()
     video_id = extract_video_id(url)
 
     # Try to get title: yt-dlp first, then you-get fallback
@@ -169,6 +183,12 @@ def create_folder(url: str) -> str:
     # Save URL for later use
     with open(os.path.join(folder_path, 'url.txt'), 'w', encoding='utf-8') as f:
         f.write(url)
+
+    # Write path to a known file so callers can Read it without relying
+    # on stdout surviving the shell encoding chain (Git Bash GBK → UTF-8).
+    marker_path = os.path.join(notes_dir, '.last_folder.txt')
+    with open(marker_path, 'w', encoding='utf-8') as f:
+        f.write(folder_path)
 
     print(folder_path)
     return folder_path
