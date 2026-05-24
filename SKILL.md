@@ -136,6 +136,8 @@ python {baseDir}/scripts/pass1_subtitle/extract_key_moments.py "<folder>"
 
 Then dispatch vision sub-agents to Read each `moment_*.jpg` — **15 frames per batch max** (20+ exceeds API body limit). Each returns `frames[{filename, timestamp_sec, transcribed_text, notable, informative, content_type, slide_title}]`. Merge `frames[]` into `pass1_scan.json`.
 
+**If vision is unavailable** (model returns `[Unsupported Image]`): skip vision dispatch. Embed frames in Pass 2 using `key_moments[]` metadata for captions. Frame extraction still runs — screenshots still exist and must be embedded.
+
 ### Image-primary
 
 ```powershell
@@ -159,8 +161,8 @@ Dispatch round-2 sub-agents the same way as Pass 1. Merge their `frames[]` into 
 **`pass1_scan.json` is the only source of truth.** Every claim must cite a `transcribed_text` entry.
 
 For each topic:
-1. Filter `frames[]` to the topic's timestamp range. Pull all `transcribed_text` and `notable`.
-2. Pick 1-5 frames to embed. Re-Read only if transcription isn't enough.
+1. Filter `frames[]` to the topic's timestamp range. Pull all `transcribed_text` and `notable`. On blind path, use `key_moments[]` metadata instead.
+2. Pick 1-5 frames to embed. Re-Read only if transcription isn't enough AND vision is available.
 3. Write the H2 section:
 
 ```markdown
@@ -185,6 +187,8 @@ Finalize: `Read` draft → `Write` complete final document to same path.
 
 **Late-stage gap**: if a topic has insufficient frames during Pass 2, append to `gap_suspicions`, re-run `resolve_gaps.py`, dispatch one more sub-agent.
 
+**If vision was unavailable**: write image captions from `key_moments[].reason` and surrounding subtitle text. Never skip embedding images just because the model can't read them.
+
 ## Style by video type
 
 | Type | Emphasis |
@@ -204,6 +208,7 @@ Finalize: `Read` draft → `Write` complete final document to same path.
 - [ ] **S5** — Each Q&A exchange has question + grounded answer, not a one-line summary.
 - [ ] **S6** — No "核心技术要点" pre-section; no "待深入研究". Unresolved points are inline.
 - [ ] **S7** — 总结与启发 contains cross-cutting patterns, not a re-summary of topics.
+- [ ] **S8** — Notes.md has embedded images. If vision was unavailable, captions trace to `key_moments[].reason` or subtitle context.
 
 ## Scripts
 
