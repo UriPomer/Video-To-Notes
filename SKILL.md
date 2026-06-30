@@ -1,7 +1,7 @@
 ---
 name: video-summarizer
 description: "Download videos from Bilibili/YouTube, capture slide screenshots, and generate topic-organized notes via parallel sub-agent vision analysis."
-version: 2.2.0
+version: 2.2.1
 ---
 
 # Video Summarizer
@@ -100,7 +100,16 @@ notes actually reference. Run this to delete unused images and save disk space:
 python {baseDir}/scripts/pass2_scaffold/prune_screenshots.py "<folder>"
 ```
 
-Add `--dry-run` first to preview without deleting.
+`--dry-run` is only a preview, not completion. Finalize in this order:
+
+1. Verify every `notes.md` image reference exists.
+2. Run `prune_screenshots.py "<folder>" --dry-run` and read the preview.
+3. Unless the user explicitly asks to keep unused screenshots, run
+   `prune_screenshots.py "<folder>"` without `--dry-run`.
+4. Re-run `--dry-run`; it must report `unreferenced : 0` / `Nothing to prune`.
+
+Do not stop after the dry run. Do not leave `screenshots/` containing generated
+frames that `notes.md` does not reference.
 
 Phase A complete. Proceed to Phase B.
 
@@ -209,6 +218,7 @@ Finalize: `Read` draft → `Write` complete final document to same path.
 - [ ] **S6** — No "核心技术要点" pre-section; no "待深入研究". Unresolved points are inline.
 - [ ] **S7** — 总结与启发 contains cross-cutting patterns, not a re-summary of topics.
 - [ ] **S8** — Notes.md has embedded images. If vision was unavailable, captions trace to `key_moments[].reason` or subtitle context.
+- [ ] **S9** — `prune_screenshots.py "<folder>" --dry-run` reports zero unreferenced screenshots after final cleanup.
 
 ## Scripts
 
