@@ -1,7 +1,6 @@
 ---
 name: video-summarizer-zh
 description: "从 Bilibili/YouTube 下载视频，截取幻灯片，通过并行 sub-agent 视觉分析生成主题化笔记。"
-version: 2.2.0
 ---
 
 # 视频摘要器
@@ -18,6 +17,8 @@ version: 2.2.0
 pip install yt-dlp you-get opencv-python numpy faster-whisper
 # ffmpeg 需要在 PATH 上
 ```
+
+**YouTube（Windows）**：需要 Node.js 22+，并使用官方 EJS challenge solver。下载脚本优先读取 `%USERPROFILE%\.codex\secrets\videonotes-youtube-cookies.txt`；该文件不存在或失效时，完全关闭 Vivaldi，再用 `--cookies-from-browser vivaldi --cookies <私密路径>` 刷新。Cookie 只保存在用户私密目录，绝不显示、写入项目或提交 Git。
 
 可选导入检查：`python -c "import faster_whisper; print('ok')"`
 
@@ -50,6 +51,8 @@ python {baseDir}/scripts/fetch/create_folder.py "<video_url>"
 
 打印文件夹路径。B 站视频 stderr 里 412 错误是正常的，文件夹仍然创建。
 
+YouTube：脚本先使用 YouTube oEmbed 读取公开标题，不读取浏览器 Cookie；若 oEmbed 不可用才尝试 Vivaldi。绝不以视频 ID 作为正常标题的替代品。
+
 ### Step 2 — 下载视频
 
 ```powershell
@@ -57,6 +60,8 @@ python {baseDir}/scripts/fetch/download_video.py "<video_url>" "<folder>"
 ```
 
 B 站：yt-dlp 报 412 → you-get 接管，两者都是正常流程，不要重试。
+
+YouTube：下载脚本自动优先使用已保存 Cookie，并启用 Node 和 EJS solver；成功后会将 yt-dlp 的临时 `video.info.json` 归一化为 `metadata.json`，保留视频、字幕和缩略图。保存的 Cookie 失效时再关闭 Vivaldi 刷新。
 
 ### Step 3 — 转录音频（阻塞命令，等待完成，不要后台或轮询）
 
@@ -202,7 +207,7 @@ python {baseDir}/scripts/pass15_gaps/resolve_gaps.py "<folder>" --min-priority m
 - [ ] **S4** — 按需使用表格、code block、ASCII 树。
 - [ ] **S5** — 每组 Q&A 有完整问题和有依据的答案，不是一句总结。
 - [ ] **S6** — 没有"核心技术要点"前置 section；没有"待深入研究"；未解问题都 inline。
-- [ ] **S7** — 总结与启发是跨章节规律，不是对正文的复述。
+- [ ] **S7** — 总结与启发既需要正文的复述，更需要跨章节规律。规律需要结合正文来讲解。
 
 ## 脚本
 

@@ -1,7 +1,6 @@
 ---
 name: video-summarizer
 description: "Download videos from Bilibili/YouTube, capture slide screenshots, and generate topic-organized notes via parallel sub-agent vision analysis."
-version: 2.2.0
 ---
 
 # Video Summarizer
@@ -18,6 +17,8 @@ Reference output: `{baseDir}/examples/good_notes_phasmophobia.md` — treat it a
 pip install yt-dlp you-get opencv-python numpy faster-whisper
 # ffmpeg must be on PATH
 ```
+
+**YouTube on Windows:** Node.js 22+ and the official EJS challenge solver are required. Prefer the persisted cookie jar at `%USERPROFILE%\.codex\secrets\videonotes-youtube-cookies.txt`. If it is missing or expired, fully close Vivaldi and refresh it with `--cookies-from-browser vivaldi --cookies <private-path>`. Keep cookies only in the user's private directory; never print them, write them into the project, or commit them.
 
 Optional import smoke-check: `python -c "import faster_whisper; print('ok')"`
 
@@ -50,6 +51,8 @@ python {baseDir}/scripts/fetch/create_folder.py "<video_url>"
 
 Prints folder path. 412 errors in stderr are normal for Bilibili; folder is created anyway.
 
+For YouTube, the script first reads the public title with YouTube oEmbed without touching browser cookies. It only tries Vivaldi if oEmbed is unavailable, and never uses the video ID as a normal-title substitute.
+
 ### Step 2 — Download video
 
 ```powershell
@@ -57,6 +60,8 @@ python {baseDir}/scripts/fetch/download_video.py "<video_url>" "<folder>"
 ```
 
 Bilibili: yt-dlp fails with 412 → you-get takes over. Both are expected. Do not retry.
+
+For YouTube, the downloader prefers the persisted cookie jar and enables Node and the EJS solver. It normalizes yt-dlp's temporary `video.info.json` into `metadata.json` and retains the video, subtitles, and thumbnail. Refresh expired cookies from a fully closed Vivaldi session.
 
 ### Step 3 — Transcribe audio (BLOCKING — just wait, do not background or poll)
 
@@ -207,7 +212,7 @@ Finalize: `Read` draft → `Write` complete final document to same path.
 - [ ] **S4** — Tables, code blocks, ASCII trees used where content demands.
 - [ ] **S5** — Each Q&A exchange has question + grounded answer, not a one-line summary.
 - [ ] **S6** — No "核心技术要点" pre-section; no "待深入研究". Unresolved points are inline.
-- [ ] **S7** — 总结与启发 contains cross-cutting patterns, not a re-summary of topics.
+- [ ] **S7** — 总结与启发 includes a recap of the body, but prioritizes cross-cutting patterns and explains them in connection with the body.
 - [ ] **S8** — Notes.md has embedded images. If vision was unavailable, captions trace to `key_moments[].reason` or subtitle context.
 
 ## Scripts

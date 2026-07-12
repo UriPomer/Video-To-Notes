@@ -62,6 +62,33 @@ def extract_video_id(url: str) -> str:
     return "unknown"
 
 
+def is_youtube_url(url: str) -> bool:
+    """Return whether *url* is a YouTube watch, short, or share URL."""
+    host = urllib.parse.urlparse(url).netloc.lower()
+    return host == 'youtu.be' or host.endswith('youtube.com')
+
+
+def youtube_ydl_options() -> dict:
+    """Options required to access YouTube reliably on this Windows setup."""
+    return {
+        'cookiesfrombrowser': ('vivaldi', None, None, None),
+        'js_runtimes': {'node': {}},
+        'remote_components': {'ejs:github'},
+    }
+
+
+def extract_youtube_oembed_title(url: str) -> str | None:
+    """Get a public YouTube title without depending on authenticated playback."""
+    try:
+        params = urllib.parse.urlencode({'url': url, 'format': 'json'})
+        endpoint = f'https://www.youtube.com/oembed?{params}'
+        req = urllib.request.Request(endpoint, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode('utf-8')).get('title')
+    except Exception:
+        return None
+
+
 _PROJECT_MARKERS = ('.claude', '.codebuddy', '.cursor', '.codex')
 
 
@@ -147,14 +174,18 @@ def create_folder(url: str) -> str:
     _ensure_utf8_stdout()
     video_id = extract_video_id(url)
 
-    # Try to get title: yt-dlp first, then you-get fallback
-    title = None
+    # Resolve public YouTube titles without touching the browser cookie DB.
+    # This keeps folder naming reliable even while Vivaldi is open.
+    title = extract_youtube_oembed_title(url) if is_youtube_url(url) else None
     try:
-        import yt_dlp
-        ydl_opts = {'quiet': True, 'no_warnings': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = info.get('title')
+        if not title:
+            import yt_dlp
+            ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+            if is_youtube_url(url):
+                ydl_opts.update(youtube_ydl_options())
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title')
     except Exception:
         pass
 
