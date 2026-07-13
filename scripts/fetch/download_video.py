@@ -28,6 +28,28 @@ if _SCRIPTS_ROOT not in sys.path:
 
 from common.utils import locate_video_file  # noqa: E402
 
+SAVED_YOUTUBE_COOKIES = os.path.join(
+    os.path.expanduser('~'), '.codex', 'secrets', 'videonotes-youtube-cookies.txt'
+)
+
+
+def is_youtube_url(url: str) -> bool:
+    """Return whether *url* points at YouTube."""
+    return 'youtube.com' in url or 'youtu.be' in url
+
+
+def youtube_ydl_options() -> dict:
+    """Options required to access YouTube reliably on this Windows setup."""
+    options = {
+        'js_runtimes': {'node': {}},
+        'remote_components': {'ejs:github'},
+    }
+    if os.path.isfile(SAVED_YOUTUBE_COOKIES):
+        options['cookiefile'] = SAVED_YOUTUBE_COOKIES
+    else:
+        options['cookiesfrombrowser'] = ('vivaldi', None, None, None)
+    return options
+
 
 def _extract_metadata_fields(info: dict, url: str) -> dict:
     """Pull standard metadata fields from a yt-dlp info dict."""
@@ -73,6 +95,8 @@ def download_with_ytdlp(url: str, output_folder: str) -> Tuple[dict, str]:
         'quiet': False,
         'no_warnings': False,
     }
+    if is_youtube_url(url):
+        ydl_opts.update(youtube_ydl_options())
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -82,6 +106,12 @@ def download_with_ytdlp(url: str, output_folder: str) -> Tuple[dict, str]:
         metadata_path = os.path.join(output_folder, 'metadata.json')
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        # The workflow keeps normalized metadata.json, not yt-dlp's verbose
+        # transient info JSON.
+        info_json_path = os.path.join(output_folder, 'video.info.json')
+        if os.path.exists(info_json_path):
+            os.remove(info_json_path)
 
         # Find video file
         video_file = locate_video_file(output_folder)
