@@ -24,6 +24,7 @@ Output:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -131,6 +132,54 @@ def filter_new_frames(screenshots_dir: str, filenames: List[str]) -> List[str]:
     return kept
 
 
+def select_evenly(items: List[str], limit: int) -> List[str]:
+    """保留首尾并在中间均匀取样，避免渐进式幻灯片淹没视觉批次。"""
+    if limit <= 0:
+        return []
+    if len(items) <= limit:
+        return list(items)
+    if limit == 1:
+        return [items[len(items) // 2]]
+    indexes = [round(index * (len(items) - 1) / (limit - 1)) for index in range(limit)]
+    return [items[index] for index in indexes]
+
+
+def apply_frame_budget(entries: List[Dict], max_per_gap: int,
+                       max_total: int) -> List[Dict]:
+    """先限制单缺口，再公平分配全局预算；输入顺序已体现优先级。"""
+    limited = [
+        {**entry, 'kept_frames': select_evenly(entry['kept_frames'], max_per_gap)}
+        for entry in entries
+        if entry.get('kept_frames')
+    ]
+    total = sum(len(entry['kept_frames']) for entry in limited)
+    if total <= max_total:
+        return limited
+
+    allocations = [0] * len(limited)
+    remaining = max_total
+    for index in range(min(len(limited), remaining)):
+        allocations[index] = 1
+    remaining -= sum(allocations)
+    while remaining > 0:
+        progressed = False
+        for index, entry in enumerate(limited):
+            if allocations[index] < len(entry['kept_frames']):
+                allocations[index] += 1
+                remaining -= 1
+                progressed = True
+                if remaining == 0:
+                    break
+        if not progressed:
+            break
+
+    return [
+        {**entry, 'kept_frames': select_evenly(entry['kept_frames'], allocations[index])}
+        for index, entry in enumerate(limited)
+        if allocations[index] > 0
+    ]
+
+
 def estimate_ts_from_gap_filename(fn: str, start: float, fps: float) -> float:
     """gap_0320_0400_003.jpg -> start + (idx-1) / fps."""
     import re
@@ -183,15 +232,18 @@ def print_round2_prompts(plan: Dict) -> None:
     print(f"# Pass 1.5 round-2 plan — {plan['total_new_frames']} new frames in {n} batches")
     print(f"#   (from {plan['gaps_processed']} gaps; {plan['gaps_skipped']} skipped by priority)")
     print(f"# Saved: {os.path.join(video_folder, 'pass1_gaps_plan.json')}")
+    print(f"# Plan ID: {plan['plan_id']}")
     if n == 0:
         print("# No round-2 batches needed.")
         return
-    print(f"# Dispatch ALL {n} sub-agents in parallel (one message with {n} Agent tool calls).")
+    print(f"# Process ALL {n} batches; use available concurrency in waves.")
     print()
 
     for b in plan['batches']:
         start = format_ts(b['start_sec'])
         end = format_ts(b['end_sec'])
+        result_path = os.path.join(
+            video_folder, 'pass15_results', f"batch_{b['index']:03d}.json")
         print(f"=== ROUND-2 BATCH {b['index']} of {n} ===")
         print(f"Time range: {start} - {end}  ({b['frame_count']} frames)")
         print()
@@ -214,11 +266,14 @@ def print_round2_prompts(plan: Dict) -> None:
             abs_path = os.path.normpath(os.path.join(video_folder, f['rel_path']))
             print(f"  {format_ts(f['timestamp_sec'])}  {abs_path}{marker}")
         print()
-        print("Return ONLY a JSON object (no markdown, no prose). Same schema as")
+        print(f"Write exactly one JSON object to: {result_path}")
+        print("Use the same schema as")
         print("Pass 1, but gap_suspicions is usually empty (we're already")
         print("resolving gaps — only flag a nested gap if VERY obvious):")
-        print("""{
-  "batch_range": "<start_mmss>-<end_mmss>",
+        print("{")
+        print(f'  "plan_id": "{plan["plan_id"]}",')
+        print(f'  "batch_index": {b["index"]},')
+        print("""  "batch_range": "<start_mmss>-<end_mmss>",
   "frames": [
     {
       "filename": "gap_XXXX_YYYY_NNN.jpg",
@@ -235,15 +290,21 @@ def print_round2_prompts(plan: Dict) -> None:
   "gap_suspicions": []
 }""")
         print()
-        print("CRITICAL — your ENTIRE response must be the JSON object above and nothing else:")
-        print("  - NO introductory sentence like 'Here is the analysis...'")
-        print("  - NO closing remarks like 'Key findings:...'")
-        print("  - NO markdown code fences (```json ... ```)")
-        print("  - NO file writes — return the JSON inline in your response")
-        print("  - The first character of your response must be '{'")
-        print("  - The last character of your response must be '}'")
+        print("CRITICAL — write the result file directly:")
+        print("  - Use apply_patch to create only the JSON file at the exact path above")
+        print("  - Write valid JSON without markdown fences or surrounding prose")
+        print("  - Do not modify any other file")
+        print("  - In your final response, only confirm the batch index and result path")
         print("---")
         print()
+
+
+def print_round2_summary(plan: Dict) -> None:
+    video_folder = plan['_runtime_video_folder']
+    print(f"Pass 1.5 计划已保存: {os.path.join(video_folder, 'pass1_gaps_plan.json')}")
+    print(f"Plan ID: {plan['plan_id']}; 批次: {len(plan['batches'])}; 帧: {plan['total_new_frames']}")
+    print("将每批结果写入 pass15_results\\batch_NNN.json，再运行 merge_results.py --stage pass15。")
+    print("需要查看完整代理提示时重新运行并添加 --print-prompts。")
 
 
 def main():
@@ -260,6 +321,12 @@ def main():
                         help='Compute the plan but skip ffmpeg execution')
     parser.add_argument('--batch-size', type=int, default=15,
                         help='Target frames per round-2 sub-agent (default: 15)')
+    parser.add_argument('--max-frames-per-gap', type=int, default=6,
+                        help='每个缺口最多保留的代表帧数（默认: 6）')
+    parser.add_argument('--max-total-frames', type=int, default=60,
+                        help='Pass 1.5 最多保留的代表帧总数（默认: 60）')
+    parser.add_argument('--print-prompts', action='store_true',
+                        help='打印全部代理提示；默认只输出计划摘要')
     args = parser.parse_args()
 
     video_folder = os.path.abspath(args.video_folder)
@@ -279,7 +346,10 @@ def main():
         sys.exit(1)
 
     scan = load_json(scan_path, {})
-    raw_gaps = scan.get('gap_suspicions', [])
+    raw_gaps = [
+        gap for gap in scan.get('gap_suspicions', [])
+        if gap.get('status') not in ('resolved', 'documented')
+    ]
     if not raw_gaps:
         print("No gap_suspicions in pass1_scan.json — nothing to resolve.")
         return
@@ -338,6 +408,21 @@ def main():
                 'kept_frames': kept,
             })
 
+    before_budget = {
+        filename for entry in new_frames_by_gap for filename in entry['kept_frames']
+    }
+    new_frames_by_gap = apply_frame_budget(
+        new_frames_by_gap, args.max_frames_per_gap, args.max_total_frames)
+    after_budget = {
+        filename for entry in new_frames_by_gap for filename in entry['kept_frames']
+    }
+    if not args.dry_run:
+        for filename in before_budget - after_budget:
+            try:
+                os.remove(os.path.join(screenshots_dir, filename))
+            except OSError:
+                pass
+
     total_new = sum(len(e['kept_frames']) for e in new_frames_by_gap)
     print()
     print(f"  Total new informative frames: {total_new}")
@@ -347,7 +432,12 @@ def main():
     plan_path = os.path.join(video_folder, 'pass1_gaps_plan.json')
     # _runtime_video_folder is an anchor for print_round2_prompts() to rebuild
     # absolute paths; it is stripped before the JSON is persisted.
+    identity_payload = {'new_frames_by_gap': new_frames_by_gap, 'batches': batches}
     plan = {
+        'plan_type': 'gaps',
+        'plan_id': hashlib.sha256(
+            json.dumps(identity_payload, ensure_ascii=False, sort_keys=True).encode('utf-8')
+        ).hexdigest()[:16],
         'gaps_processed': len(new_frames_by_gap),
         'gaps_skipped': skipped,
         'total_new_frames': total_new,
@@ -359,8 +449,13 @@ def main():
         persisted = {k: v for k, v in plan.items() if not k.startswith('_')}
         json.dump(persisted, f, ensure_ascii=False, indent=2)
 
+    os.makedirs(os.path.join(video_folder, 'pass15_results'), exist_ok=True)
+
     print()
-    print_round2_prompts(plan)
+    if args.print_prompts:
+        print_round2_prompts(plan)
+    else:
+        print_round2_summary(plan)
 
 
 if __name__ == '__main__':

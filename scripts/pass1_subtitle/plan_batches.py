@@ -17,6 +17,7 @@ Options:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -87,6 +88,10 @@ def build_plan(video_folder: str, target_chars: int, max_batches: int) -> Dict:
         })
 
     plan = {
+        'plan_type': 'subtitle',
+        'plan_id': hashlib.sha256(
+            json.dumps(batches, ensure_ascii=False, sort_keys=True).encode('utf-8')
+        ).hexdigest()[:16],
         'total_segments': len(segments),
         'total_chars': sum(len(s['text']) for s in segments),
         'n_batches': len(batches),
@@ -96,31 +101,27 @@ def build_plan(video_folder: str, target_chars: int, max_batches: int) -> Dict:
     }
 
     plan_path = os.path.join(video_folder, 'pass1_subtitle_plan.json')
-    # Persist without the inline segment text duplicates — the source of
-    # truth is subtitles.json. Keep segment timestamps + indices only.
-    persisted = {
-        **plan,
-        'batches': [
-            {**b, 'segments': [{'start': s['start'], 'end': s['end']} for s in b['segments']]}
-            for b in batches
-        ],
-    }
     with open(plan_path, 'w', encoding='utf-8') as f:
-        json.dump(persisted, f, ensure_ascii=False, indent=2)
+        # 保留批次正文，重启后无需依赖已滚出上下文的终端输出。
+        json.dump(plan, f, ensure_ascii=False, indent=2)
 
+    plan['_runtime_video_folder'] = video_folder
     return plan
 
 
 def print_prompts(plan: Dict) -> None:
     n = plan['n_batches']
     print(f"# Pass 1 (subtitle-driven) — {plan['total_chars']} chars in {n} batches")
+    print(f"# Plan ID: {plan['plan_id']}")
     print(f"# Language: {plan['lang']}  Source: {plan['source']}")
-    print(f"# Dispatch ALL {n} sub-agents in parallel (one message with {n} Agent tool calls).")
+    print(f"# Process ALL {n} batches; use available concurrency in waves.")
     print()
 
     for b in plan['batches']:
         start = format_ts(b['start_sec'])
         end = format_ts(b['end_sec'])
+        result_path = os.path.join(
+            plan['_runtime_video_folder'], 'pass1_results', f"batch_{b['index']:03d}.json")
         print(f"=== BATCH {b['index']} of {n} ===")
         print(f"Time range: {start} - {end}  ({b['segment_count']} segments, {b['char_count']} chars)")
         print()
@@ -138,9 +139,11 @@ def print_prompts(plan: Dict) -> None:
             text_one_line = seg['text'].replace('\n', ' ').strip()
             print(f"  [{ts}] {text_one_line}")
         print()
-        print("Return ONLY a JSON object (no markdown, no prose):")
-        print("""{
-  "batch_range": "<start_mmss>-<end_mmss>",
+        print(f"Write exactly one JSON object to: {result_path}")
+        print("{")
+        print(f'  "plan_id": "{plan["plan_id"]}",')
+        print(f'  "batch_index": {b["index"]},')
+        print("""  "batch_range": "<start_mmss>-<end_mmss>",
   "topic_candidates": [
     { "start_sec": 125.0, "title": "Sensor Toolkit", "evidence_text": "first mentioned here..." }
   ],
@@ -161,13 +164,11 @@ def print_prompts(plan: Dict) -> None:
   ]
 }""")
         print()
-        print("CRITICAL — your ENTIRE response must be the JSON object above and nothing else:")
-        print("  - NO introductory sentence like 'Here is the analysis...'")
-        print("  - NO closing remarks like 'Key findings:...'")
-        print("  - NO markdown code fences (```json ... ```)")
-        print("  - NO file writes — return the JSON inline in your response")
-        print("  - The first character of your response must be '{'")
-        print("  - The last character of your response must be '}'")
+        print("CRITICAL — write the result file directly:")
+        print("  - Use apply_patch to create only the JSON file at the exact path above")
+        print("  - Write valid JSON without markdown fences or surrounding prose")
+        print("  - Do not modify any other file")
+        print("  - In your final response, only confirm the batch index and result path")
         print()
         print("Guidance for key_moments:")
         print("  - Mark timestamps where a screenshot would materially help the reader:")
@@ -186,6 +187,14 @@ def print_prompts(plan: Dict) -> None:
         print()
 
 
+def print_summary(plan: Dict, video_folder: str) -> None:
+    plan_path = os.path.join(os.path.abspath(video_folder), 'pass1_subtitle_plan.json')
+    print(f"Pass 1 字幕计划已保存: {plan_path}")
+    print(f"Plan ID: {plan['plan_id']}; 批次: {plan['n_batches']}; 字符: {plan['total_chars']}")
+    print("将每批结果写入 pass1_results\\batch_NNN.json，再运行 merge_results.py --stage pass1。")
+    print("需要查看完整代理提示时重新运行并添加 --print-prompts。")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Plan Pass 1 subtitle-driven sub-agent batches')
     parser.add_argument('video_folder', help='Path to the video output folder (containing subtitles.json)')
@@ -193,10 +202,16 @@ def main():
                         help='Target chars per batch (default: 2500)')
     parser.add_argument('--max-batches', type=int, default=12,
                         help='Hard cap on batch count (default: 12)')
+    parser.add_argument('--print-prompts', action='store_true',
+                        help='打印全部代理提示；默认只输出计划摘要')
     args = parser.parse_args()
 
     plan = build_plan(args.video_folder, args.target_chars, args.max_batches)
-    print_prompts(plan)
+    os.makedirs(os.path.join(os.path.abspath(args.video_folder), 'pass1_results'), exist_ok=True)
+    if args.print_prompts:
+        print_prompts(plan)
+    else:
+        print_summary(plan, args.video_folder)
 
 
 if __name__ == '__main__':

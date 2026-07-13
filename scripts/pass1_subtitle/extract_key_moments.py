@@ -14,6 +14,7 @@ entries so Pass 2 can cite them the same way as regular frames.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -76,7 +77,30 @@ def extract_one(video_file: str, ts_sec: float, out_path: str, scale: int) -> bo
     return True
 
 
-def extract_moments(video_folder: str, min_gap: float, scale: int) -> List[Dict]:
+def build_frame_plan(results: List[Dict], batch_size: int) -> Dict:
+    batches = []
+    for start in range(0, len(results), batch_size):
+        chunk = results[start:start + batch_size]
+        batches.append({
+            'index': len(batches) + 1,
+            'start_sec': chunk[0]['timestamp_sec'],
+            'end_sec': chunk[-1]['timestamp_sec'],
+            'frame_count': len(chunk),
+            'frames': chunk,
+        })
+    return {
+        'plan_type': 'keyframes',
+        'plan_id': hashlib.sha256(
+            json.dumps(batches, ensure_ascii=False, sort_keys=True).encode('utf-8')
+        ).hexdigest()[:16],
+        'total_frames': len(results),
+        'n_batches': len(batches),
+        'batches': batches,
+    }
+
+
+def extract_moments(video_folder: str, min_gap: float, scale: int,
+                    batch_size: int = 15) -> List[Dict]:
     video_folder = os.path.abspath(video_folder)
     video_file = locate_video_file(video_folder)
     if not video_file:
@@ -120,8 +144,15 @@ def extract_moments(video_folder: str, min_gap: float, scale: int) -> List[Dict]
     manifest_path = os.path.join(video_folder, 'key_moments_extracted.json')
     with open(manifest_path, 'w', encoding='utf-8') as f:
         json.dump({'extracted': results}, f, ensure_ascii=False, indent=2)
+    plan = build_frame_plan(results, batch_size)
+    plan_path = os.path.join(video_folder, 'pass1_frame_plan.json')
+    with open(plan_path, 'w', encoding='utf-8') as f:
+        json.dump(plan, f, ensure_ascii=False, indent=2)
+    os.makedirs(os.path.join(video_folder, 'pass1_frame_results'), exist_ok=True)
     print(f"[extract_key_moments] wrote {len(results)} frames to {screenshots_dir}")
     print(f"[extract_key_moments] manifest: {manifest_path}")
+    print(f"[extract_key_moments] visual plan: {plan_path} "
+          f"(plan_id={plan['plan_id']}, batches={plan['n_batches']})")
     return results
 
 
@@ -136,8 +167,13 @@ def main():
                         help='Minimum gap between extracted moments in seconds (default: 3.0)')
     parser.add_argument('--scale', type=int, default=800,
                         help='Output width in pixels (default: 800, matches capture_ppt_frames)')
+    parser.add_argument('--batch-size', type=int, default=15,
+                        help='Visual analysis frames per batch (default: 15)')
     args = parser.parse_args()
-    extract_moments(args.video_folder, min_gap=args.min_gap, scale=args.scale)
+    extract_moments(
+        args.video_folder, min_gap=args.min_gap, scale=args.scale,
+        batch_size=args.batch_size,
+    )
 
 
 if __name__ == '__main__':

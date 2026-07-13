@@ -4,6 +4,7 @@ Create a sanitized folder for video download based on URL.
 Usage: python create_folder.py <video_url>
 """
 
+import argparse
 import sys
 import os
 import re
@@ -169,7 +170,7 @@ def _ensure_utf8_stdout():
             pass
 
 
-def create_folder(url: str) -> str:
+def create_folder(url: str, output_root: str | None = None) -> str:
     """Create folder and return its path."""
     _ensure_utf8_stdout()
     video_id = extract_video_id(url)
@@ -202,9 +203,13 @@ def create_folder(url: str) -> str:
     title_part = sanitize_filename(title)[:60]
     folder_name = f"{title_part}_{video_id}"
 
-    # Create folder in notes/ directory (project root level)
+    # Create folder in notes/ by default; callers may choose a category root.
     project_root = get_project_root()
-    notes_dir = os.path.join(project_root, 'notes')
+    if output_root:
+        notes_dir = output_root if os.path.isabs(output_root) else os.path.join(project_root, output_root)
+    else:
+        notes_dir = os.path.join(project_root, 'notes')
+    notes_dir = os.path.abspath(notes_dir)
     os.makedirs(notes_dir, exist_ok=True)
     folder_path = os.path.join(notes_dir, folder_name)
     os.makedirs(folder_path, exist_ok=True)
@@ -224,9 +229,9 @@ def create_folder(url: str) -> str:
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python create_folder.py <video_url>", file=sys.stderr)
-        sys.exit(1)
-
-    url = sys.argv[1]
-    create_folder(url)
+    parser = argparse.ArgumentParser(description='按视频标题创建安全的输出目录')
+    parser.add_argument('video_url')
+    parser.add_argument('--output-root',
+                        help='输出根目录；相对路径按 workspace 根目录解析，默认 notes')
+    args = parser.parse_args()
+    create_folder(args.video_url, output_root=args.output_root)

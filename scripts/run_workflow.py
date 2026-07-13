@@ -120,18 +120,23 @@ def run_workflow(url: str, ppt_mode: bool = False, interval: int = 30,
             print(f"\n[6/7] Skipping key frame selection (using all frames)")
 
     # Step 7: Generate draft scaffold (mode-agnostic)
-    print("\n[7/7] Generating notes scaffold...")
+    print("\n[7/7] Generating Chinese notes draft...")
     notes_path = generate_notes(folder, ppt_mode=ppt_mode)
 
     print("\n" + "=" * 60)
-    print("Workflow complete!")
+    print("Material preparation complete.")
     print(f"Mode: {mode}")
     print(f"Output folder: {folder}")
-    print(f"Notes scaffold: {notes_path}")
+    print(f"Notes draft: {notes_path}")
     if mode == 'subtitle_primary':
-        print(f"Next step: python plan_subtitle_pass1.py \"{folder}\"")
+        planner = os.path.join(_SCRIPTS_ROOT, 'pass1_subtitle', 'plan_batches.py')
+        planner_args = ''
     else:
-        print(f"Next step: python plan_pass1_batches.py \"{folder}\"")
+        planner = os.path.join(_SCRIPTS_ROOT, 'pass1_image', 'plan_batches.py')
+        planner_args = ' --key-frames-only --batch-size 15'
+    print(f"Next step: python \"{planner}\" \"{folder}\"{planner_args}")
+    validator = os.path.join(_SCRIPTS_ROOT, 'validate', 'validate_notes.py')
+    print(f"Final delivery: finish notes.md, then run python \"{validator}\" \"{folder}\" --strict")
     print("=" * 60)
 
     return folder

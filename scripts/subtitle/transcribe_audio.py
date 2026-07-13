@@ -13,7 +13,7 @@ run_workflow.py can branch:
   - image_primary:    sparse/missing subtitles, fall back to frame-driven flow
 
 Usage:
-  python -u transcribe_audio.py <video_folder> [--whisper-model large-v3]
+  python -u transcribe_audio.py <video_folder> [--whisper-model medium]
 
 Output: <video_folder>/subtitles.json
 """
@@ -24,6 +24,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 from typing import Dict, List, Optional, Tuple
 
 # Add scripts/ root so common.utils is importable.
@@ -48,6 +50,25 @@ def enable_live_logs() -> None:
         reconfigure = getattr(stream, 'reconfigure', None)
         if callable(reconfigure):
             reconfigure(line_buffering=True, write_through=True)
+
+
+def emit_heartbeat(stop: threading.Event, label: str, interval: float = 60.0) -> None:
+    """长时间无模型日志时定期输出心跳，便于区分运行中与卡死。"""
+    started = time.monotonic()
+    while not stop.wait(interval):
+        elapsed = int(time.monotonic() - started)
+        print(f"[transcribe_audio] {label}仍在运行（{elapsed} 秒）...", flush=True)
+
+
+def run_with_heartbeat(operation, label: str):
+    stop = threading.Event()
+    thread = threading.Thread(target=emit_heartbeat, args=(stop, label), daemon=True)
+    thread.start()
+    try:
+        return operation()
+    finally:
+        stop.set()
+        thread.join(timeout=1)
 
 
 # ----------------------------------------------------------------------
@@ -185,7 +206,10 @@ def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cp
     if device == 'cuda':
         print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
         try:
-            return _run_whisper_in_process(video_file, model_size, 'cuda', 'float16')
+            return run_with_heartbeat(
+                lambda: _run_whisper_in_process(video_file, model_size, 'cuda', 'float16'),
+                'GPU Whisper',
+            )
         except RuntimeError as gpu_err:
             print(
                 f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
@@ -195,7 +219,10 @@ def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cp
             device = 'cpu'
 
     print(f"[transcribe_audio] loading whisper model on CPU ({model_size})...", flush=True)
-    return _run_whisper_in_process(video_file, model_size, 'cpu', 'int8')
+    return run_with_heartbeat(
+        lambda: _run_whisper_in_process(video_file, model_size, 'cpu', 'int8'),
+        'CPU Whisper',
+    )
 
 
 # ----------------------------------------------------------------------

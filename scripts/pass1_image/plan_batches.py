@@ -12,7 +12,7 @@ Usage:
 
 Options:
   --batches N             Force a specific batch count (default: auto = ceil(frame_count / batch_size))
-  --batch-size M          Target frames per batch when auto-computing (default: 20)
+  --batch-size M          Target frames per batch when auto-computing (default: 15)
   --key-frames-only       Restrict to key_frames.json (legacy, smaller shortlist)
 
 Output:
@@ -21,6 +21,7 @@ Output:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -106,6 +107,10 @@ def build_batches(video_folder: str, n_batches: int, use_all_frames: bool = True
     # Absolute paths are kept only as a runtime anchor so print_prompts() can
     # rebuild them; they are NOT intended for consumers of the JSON.
     plan = {
+        'plan_type': 'image',
+        'plan_id': hashlib.sha256(
+            json.dumps(batches, ensure_ascii=False, sort_keys=True).encode('utf-8')
+        ).hexdigest()[:16],
         'total_frames': len(frames),
         'n_batches': total,
         'batches': batches,
@@ -125,13 +130,16 @@ def print_prompts(plan: Dict) -> None:
     n = plan['n_batches']
     video_folder = plan['_runtime_video_folder']
     print(f"# Pass 1 batch plan — {plan['total_frames']} frames in {n} batches")
+    print(f"# Plan ID: {plan['plan_id']}")
     print(f"# Saved: {os.path.join(video_folder, 'pass1_plan.json')}")
-    print(f"# Dispatch ALL {n} sub-agents in parallel (one message with {n} Agent tool calls).")
+    print(f"# Process ALL {n} batches; use available concurrency in waves.")
     print()
 
     for b in plan['batches']:
         start = format_ts(b['start_sec'])
         end = format_ts(b['end_sec'])
+        result_path = os.path.join(
+            video_folder, 'pass1_results', f"batch_{b['index']:03d}.json")
         print(f"=== BATCH {b['index']} of {n} ===")
         print(f"Time range: {start} - {end}  ({b['frame_count']} frames)")
         print()
@@ -165,9 +173,11 @@ def print_prompts(plan: Dict) -> None:
         print("  Do NOT flag gaps that are clearly just speaker talk on the same")
         print("  slide with no visual change, or gaps < 20 seconds.")
         print()
-        print("Return ONLY a JSON object (no markdown, no prose):")
-        print("""{
-  "batch_range": "<start_mmss>-<end_mmss>",
+        print(f"Write exactly one JSON object to: {result_path}")
+        print("{")
+        print(f'  "plan_id": "{plan["plan_id"]}",')
+        print(f'  "batch_index": {b["index"]},')
+        print("""  "batch_range": "<start_mmss>-<end_mmss>",
   "frames": [
     {
       "filename": "frame_XXXX_YY.jpg",
@@ -194,26 +204,34 @@ def print_prompts(plan: Dict) -> None:
   ]
 }""")
         print()
-        print("CRITICAL — your ENTIRE response must be the JSON object above and nothing else:")
-        print("  - NO introductory sentence like 'Here is the analysis...'")
-        print("  - NO closing remarks like 'Key findings:...'")
-        print("  - NO markdown code fences (```json ... ```)")
-        print("  - NO file writes — return the JSON inline in your response")
-        print("  - The first character of your response must be '{'")
-        print("  - The last character of your response must be '}'")
+        print("CRITICAL — write the result file directly:")
+        print("  - Use apply_patch to create only the JSON file at the exact path above")
+        print("  - Write valid JSON without markdown fences or surrounding prose")
+        print("  - Do not modify any other file")
+        print("  - In your final response, only confirm the batch index and result path")
         print("---")
         print()
+
+
+def print_summary(plan: Dict) -> None:
+    video_folder = plan['_runtime_video_folder']
+    print(f"Pass 1 图片计划已保存: {os.path.join(video_folder, 'pass1_plan.json')}")
+    print(f"Plan ID: {plan['plan_id']}; 批次: {plan['n_batches']}; 帧: {plan['total_frames']}")
+    print("将每批结果写入 pass1_results\\batch_NNN.json，再运行 merge_results.py --stage pass1。")
+    print("需要查看完整代理提示时重新运行并添加 --print-prompts。")
 
 
 def main():
     parser = argparse.ArgumentParser(description='Plan Pass 1 sub-agent batches')
     parser.add_argument('video_folder', help='Path to the video output folder (containing key_frames.json)')
     parser.add_argument('--batches', type=int, default=None,
-                        help='Number of parallel sub-agents (default: auto = ceil(frame_count / 20))')
-    parser.add_argument('--batch-size', type=int, default=20,
-                        help='Target frames per batch when auto-computing batches (default: 20)')
+                        help='Number of batches (default: auto = ceil(frame_count / batch_size))')
+    parser.add_argument('--batch-size', type=int, default=15,
+                        help='Target frames per batch when auto-computing batches (default: 15)')
     parser.add_argument('--key-frames-only', action='store_true',
                         help='Only use frames from key_frames.json (default: scan all JPGs on disk)')
+    parser.add_argument('--print-prompts', action='store_true',
+                        help='打印全部代理提示；默认只输出计划摘要')
     args = parser.parse_args()
 
     use_all = not args.key_frames_only
@@ -239,7 +257,11 @@ def main():
         n_batches = args.batches
 
     plan = build_batches(args.video_folder, n_batches, use_all_frames=use_all)
-    print_prompts(plan)
+    os.makedirs(os.path.join(os.path.abspath(args.video_folder), 'pass1_results'), exist_ok=True)
+    if args.print_prompts:
+        print_prompts(plan)
+    else:
+        print_summary(plan)
 
 
 if __name__ == '__main__':

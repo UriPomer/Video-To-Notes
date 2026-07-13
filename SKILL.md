@@ -1,241 +1,247 @@
 ---
 name: video-summarizer
-description: "Download videos from Bilibili/YouTube, capture slide screenshots, and generate topic-organized notes via parallel sub-agent vision analysis."
-version: 2.2.1
+description: 将 Bilibili、YouTube 等视频整理成有证据支撑的中文结构化笔记。适用于下载视频、提取或转录字幕、分析幻灯片与画面、生成技术笔记、补齐证据缺口、校验并清理交付物；尤其适合演讲、教程和技术分享。
 ---
 
-# Video Summarizer
+# 视频总结
 
-Scripts prepare material → parallel sub-agents scan → main agent writes topic-based notes.
+本文件是唯一权威流程。目标不是“生成一份 Markdown”，而是交付一篇可独立阅读、结论可追溯、图片有信息量的中文笔记。
 
-Reference output: `{baseDir}/examples/good_notes_phasmophobia.md` — treat it as the quality bar.
+## 不可违反的约束
 
-## Prerequisites
+- 在 Windows PowerShell 中运行命令。
+- 最终文件只能是 `<folder>/notes.md`；自动骨架写入 `notes.draft.md`，不得把草稿直接交付。
+- 最终笔记不得包含“帧索引”“元数据”“核心技术要点”前置卡片、“待深入研究”、内部工作指令或占位文字。
+- 最终笔记必须以主题组织 H2，不得按固定时间段切章，不得把讲者自我介绍单独成章。
+- 每个正文 H2 引用 1—5 张有信息量的图片；不要使用黑屏、Logo、纯讲者、过渡页或近似重复图。
+- 图片路径只能使用 `screenshots/文件名.jpg` 一类相对路径；图片说明必须描述信息，不能暴露内部帧文件名。
+- 幻灯片中的参数、代码、表格、节点和非中文文字必须忠实读取；非中文内容默认翻译成中文。
+- 每条事实、参数和可见文字必须能追溯到字幕或 `pass1_scan.json` 的画面记录；推导内容必须明确写成综合分析，不能伪装成讲者原话。
+- `总结与启发` 必须给出跨主题规律、可迁移方法和边界条件，不能重复目录。
+- 只有严格验证通过后才能声明完成。
 
-```powershell
-# Windows: PowerShell only — Git Bash's python fails with exit 127
-# In CodeBuddy Code, invoke the PowerShell tool, never Bash, for Python commands here.
-pip install yt-dlp you-get opencv-python numpy faster-whisper
-# ffmpeg must be on PATH
-```
+优质成品参考：`examples/good_notes_phasmophobia.md`。
 
-**YouTube on Windows:** Node.js 22+ and the official EJS challenge solver are required. Prefer the persisted cookie jar at `%USERPROFILE%\.codex\secrets\videonotes-youtube-cookies.txt`. If it is missing or expired, fully close Vivaldi and refresh it with `--cookies-from-browser vivaldi --cookies <private-path>`. Keep cookies only in the user's private directory; never print them, write them into the project, or commit them.
+## 0. 环境与目录
 
-Optional import smoke-check: `python -c "import faster_whisper; print('ok')"`
-
-**Optional Windows GPU setup** (only if you want faster GPU transcription; CPU fallback works without it):
-
-```powershell
-pip install nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cufft-cu12
-
-python -c "
-import glob, os, shutil, site
-ct2 = next(d for d in [os.path.join(s, 'ctranslate2') for s in site.getsitepackages()] if os.path.isdir(d))
-copied = []
-for s in site.getsitepackages():
-    for dll in glob.glob(os.path.join(s, 'nvidia', '*', 'bin', '*.dll')):
-        dst = os.path.join(ct2, os.path.basename(dll))
-        if not os.path.exists(dst):
-            shutil.copy2(dll, dst)
-            copied.append(os.path.basename(dll))
-print('copied:', copied or 'nothing (already done)')
-"
-```
-
-## Phase A — Step-by-Step (PowerShell)
-
-### Step 1 — Create folder
+从 skill 目录安装依赖：
 
 ```powershell
-python {baseDir}/scripts/fetch/create_folder.py "<video_url>"
+pip install -r requirements.txt
 ```
 
-Prints folder path. 412 errors in stderr are normal for Bilibili; folder is created anyway.
+确认 `ffmpeg` 在 `PATH`。所有后续命令从仓库根目录运行，脚本路径写成 `.codebuddy\skills\video-summarizer\scripts\...`。
 
-For YouTube, the script first reads the public title with YouTube oEmbed without touching browser cookies. It only tries Vivaldi if oEmbed is unavailable, and never uses the video ID as a normal-title substitute.
+不要删除、重命名或重新生成已有笔记目录，除非用户明确要求。
 
-### Step 2 — Download video
+YouTube 在 Windows 上需要 Node.js 22+ 和 EJS challenge solver。下载脚本优先读取 `%USERPROFILE%\.codex\secrets\videonotes-youtube-cookies.txt`；Cookie 失效时完全关闭 Vivaldi，再用 `--cookies-from-browser vivaldi --cookies <私密路径>` 刷新。Cookie 只能保存在用户私密目录，禁止显示、写入项目或提交 Git。不得用视频 ID 冒充正常标题。
+
+## 1. 获取视频
 
 ```powershell
-python {baseDir}/scripts/fetch/download_video.py "<video_url>" "<folder>"
+python .codebuddy\skills\video-summarizer\scripts\fetch\create_folder.py "<video_url>"
+python .codebuddy\skills\video-summarizer\scripts\fetch\download_video.py "<video_url>" "<folder>"
 ```
 
-Bilibili: yt-dlp fails with 412 → you-get takes over. Both are expected. Do not retry.
-
-For YouTube, the downloader prefers the persisted cookie jar and enables Node and the EJS solver. It normalizes yt-dlp's temporary `video.info.json` into `metadata.json` and retains the video, subtitles, and thumbnail. Refresh expired cookies from a fully closed Vivaldi session.
-
-### Step 3 — Transcribe audio (BLOCKING — just wait, do not background or poll)
+需要按系列归档时，在创建阶段指定输出根目录，例如：
 
 ```powershell
-python -u {baseDir}/scripts/subtitle/transcribe_audio.py "<folder>"
+python .codebuddy\skills\video-summarizer\scripts\fetch\create_folder.py "<video_url>" --output-root "notes\Unreal-Fest"
 ```
 
-Done when you see: `[transcribe_audio] mode=subtitle_primary source=whisper_local chars=XXXX ...`
+Bilibili 上 `yt-dlp` 遇到 412 后转由 `you-get` 处理可能是正常降级。
 
-- In CodeBuddy Code, use the PowerShell tool for this step with `timeout: 600000`. Never use Bash.
-- GPU (large-v3, default): 2-10 min. CPU fallback: up to 30 min. Both are normal.
-- If stderr says the GPU failed and the script is continuing on CPU, keep waiting. Do not retry the command and do not start CUDA troubleshooting mid-run.
-- Only stop to fix the environment if Step 3 exits non-zero without writing `subtitles.json`, or if stderr explicitly says `faster-whisper` is missing.
-
-Read `subtitles.json.mode` after this step to decide Step 4.
-
-### Step 4a — Frame capture (image_primary only)
+## 2. 获取字幕并选择路线
 
 ```powershell
-python {baseDir}/scripts/capture/capture_ppt_frames.py "<folder>/video.mp4" "<folder>/screenshots" --scale 800
-python {baseDir}/scripts/capture/filter_frames.py "<folder>/screenshots"
-python {baseDir}/scripts/capture/select_key_frames.py "<folder>/screenshots"
+python -u .codebuddy\skills\video-summarizer\scripts\subtitle\transcribe_audio.py "<folder>"
 ```
 
-### Step 4b — Skip (subtitle_primary)
-
-No frame capture needed.
-
-### Step 5 — Generate draft scaffold
+默认使用 `medium + CPU`。只有用户要求或环境已确认适合时才显式使用 GPU：
 
 ```powershell
-python {baseDir}/scripts/pass2_scaffold/generate_notes.py "<folder>" --ppt
+python -u .codebuddy\skills\video-summarizer\scripts\subtitle\transcribe_audio.py "<folder>" --whisper-model large-v3 --device cuda
 ```
 
-### Step 6 — Prune unreferenced screenshots
+GPU 失败时脚本会自动回退 CPU。只要命令没有非零退出且写出了 `subtitles.json`，就等待其自然完成，不要中途重试。
+转录期间脚本每分钟输出一次存活提示；该提示不表示卡死或需要重启。
 
-After Pass 2 writes notes.md, screenshots/ often contains far more frames than the
-notes actually reference. Run this to delete unused images and save disk space:
+读取 `subtitles.json.mode`：
+
+- `subtitle_primary`：先分析字幕，只对关键时刻抽图。
+- `image_primary`：先完成幻灯片截帧与筛选。
+
+## 3A. 字幕优先路线
+
+生成可恢复的字幕批次计划：
 
 ```powershell
-python {baseDir}/scripts/pass2_scaffold/prune_screenshots.py "<folder>"
+python .codebuddy\skills\video-summarizer\scripts\pass1_subtitle\plan_batches.py "<folder>"
 ```
 
-`--dry-run` is only a preview, not completion. Finalize in this order:
+`pass1_subtitle_plan.json` 保存完整字幕正文。重启或上下文压缩后必须从该文件恢复，不得依赖先前终端输出或记忆。
 
-1. Verify every `notes.md` image reference exists.
-2. Run `prune_screenshots.py "<folder>" --dry-run` and read the preview.
-3. Unless the user explicitly asks to keep unused screenshots, run
-   `prune_screenshots.py "<folder>"` without `--dry-run`.
-4. Re-run `--dry-run`; it must report `unreferenced : 0` / `Nothing to prune`.
-
-Do not stop after the dry run. Do not leave `screenshots/` containing generated
-frames that `notes.md` does not reference.
-
-Phase A complete. Proceed to Phase B.
-
-## Core Rules
-
-| # | Rule |
-|---|---|
-| R1 | **ToC is topic-based.** H2 headings come from slide title cards ("Sensor Toolkit"), never from self-introduction time ranges. |
-| R2 | **Every embedded frame adds information.** Drop black, pure transitions, speaker-only, logos, near-duplicates. |
-| R3 | **Transcribe visible text verbatim.** Slide titles, Inspector params, code, mind-map nodes, comparison tables. Translate non-Chinese text directly into Chinese; do not keep the original alongside. |
-| R4 | **Match primitive to content.** Diagram → ASCII tree in fenced block. Params/list → table. Code → fenced code block. Before/after → 2-col table. |
-| R5 | **1-5 frames per H2 section.** Pick the one or two most informative frames per sub-idea. |
-| R6 | **Resolve questions or inline them.** Unresolved points go inline as `*（演讲中未展开：...）*` at the end of the relevant topic — never a standalone "待深入研究" section. |
-| R7 | **Embed frames only via markdown image syntax.** Use `![meaningful caption](screenshots/xxx.jpg)`. Never surface internal filenames like `frame_NNNN_MM.jpg` or `gap_SSSS_EEEE_NNN.jpg` as headings, bullets, or labels. |
-
-## Phase B — Pass 1
-
-Check `subtitles.json.mode` first.
-
-### Subtitle-primary
+默认只打印计划摘要；只有需要复制完整代理提示时才添加 `--print-prompts`。执行计划中的全部批次；按可用并发上限分波次处理，不能只处理部分批次。每个批次必须把纯 JSON 结果写入 `<folder>/pass1_results/batch_NNN.json`，然后确定性合并：
 
 ```powershell
-python {baseDir}/scripts/pass1_subtitle/plan_batches.py "<folder>"
+python .codebuddy\skills\video-summarizer\scripts\merge_results.py "<folder>" --stage pass1
 ```
 
-Prints ready-to-paste prompts. Dispatch all N sub-agents in parallel (one message, N `Agent` calls, `subagent_type="general-purpose"`). Each returns `{topic_candidates[], key_moments[], gap_suspicions[]}`. Merge into `pass1_scan.json`.
+合并器只有在 `plan_id` 一致且计划中的全部批次结果齐全时才写入 `<folder>/pass1_scan.json`。扫描文件从计划和批次结果原样保留：
 
-### Pass 1.3 — Extract frames (subtitle mode only)
+- `plan_type`、`plan_id`。
+- `completed_batch_indexes`：已合并的全部 batch index；最终必须与计划完全一致。
+
+- `topic_candidates`：主题、开始时间、字幕证据。
+- `key_moments`：建议截图时间、原因、内容类型、优先级。
+- `gap_suspicions`：疑似存在图示或代码但字幕不足的区间、原因、优先级和状态。
+
+根据关键时刻抽帧：
 
 ```powershell
-python {baseDir}/scripts/pass1_subtitle/extract_key_moments.py "<folder>"
+python .codebuddy\skills\video-summarizer\scripts\pass1_subtitle\extract_key_moments.py "<folder>"
 ```
 
-Then dispatch vision sub-agents to Read each `moment_*.jpg` — **15 frames per batch max** (20+ exceeds API body limit). Each returns `frames[{filename, timestamp_sec, transcribed_text, notable, informative, content_type, slide_title}]`. Merge `frames[]` into `pass1_scan.json`.
-
-**If vision is unavailable** (model returns `[Unsupported Image]`): skip vision dispatch. Embed frames in Pass 2 using `key_moments[]` metadata for captions. Frame extraction still runs — screenshots still exist and must be embedded.
-
-### Image-primary
+该命令同时生成 `pass1_frame_plan.json`。按计划读取全部 `moment_*.jpg`，每批结果写入 `<folder>/pass1_frame_results/batch_NNN.json`，再运行：
 
 ```powershell
-python {baseDir}/scripts/pass1_image/plan_batches.py "<folder>" --key-frames-only --batch-size 15
+python .codebuddy\skills\video-summarizer\scripts\merge_results.py "<folder>" --stage keyframes
 ```
 
-Dispatch all N sub-agents in parallel. Each returns `{frames[], topic_candidates[], gap_suspicions[]}`. Merge into `pass1_scan.json`. A frame is eligible only if `informative: true`.
+合并后的视觉记录位于 `pass1_scan.json.frames`。每帧至少记录：
 
-## Phase B — Pass 1.5
+```text
+filename, timestamp_sec, transcribed_text, notable,
+informative, content_type, slide_title
+```
 
-**Always run Pass 1.5.** Skip only if `gap_suspicions` is empty after merging all Pass 1 batches.
+如果当前模型无法读取图片，不要丢弃已经抽出的截图。使用 `key_moments[].reason` 和邻近字幕为图片写有依据的说明，并在证据记录中标明视觉不可用。
+
+## 3B. 图片优先路线
 
 ```powershell
-python {baseDir}/scripts/pass15_gaps/resolve_gaps.py "<folder>" --min-priority medium
+python .codebuddy\skills\video-summarizer\scripts\capture\capture_ppt_frames.py "<folder>\video.mp4" "<folder>\screenshots" --scale 800
+python .codebuddy\skills\video-summarizer\scripts\capture\filter_frames.py "<folder>\screenshots"
+python .codebuddy\skills\video-summarizer\scripts\capture\select_key_frames.py "<folder>\screenshots"
+python .codebuddy\skills\video-summarizer\scripts\pass1_image\plan_batches.py "<folder>" --key-frames-only --batch-size 15
 ```
 
-Dispatch round-2 sub-agents the same way as Pass 1. Merge their `frames[]` into `pass1_scan.json`.
+默认只打印摘要；需要完整代理提示时添加 `--print-prompts`。按可用并发上限分波次执行全部批次，每批最多 15 张，将每批纯 JSON 写入 `<folder>/pass1_results/batch_NNN.json`，再运行：
 
-## Phase B — Pass 2
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\merge_results.py "<folder>" --stage pass1
+```
 
-**`pass1_scan.json` is the only source of truth.** Every claim must cite a `transcribed_text` entry.
+合并结果包含 `{frames[], topic_candidates[], gap_suspicions[]}`、计划的 `plan_type`、`plan_id` 和完整 `completed_batch_indexes`。只有 `informative: true` 的图片可进入正文。优先保留标题页、参数页、代码、架构图、对照图和有效 Q&A 画面。
 
-For each topic:
-1. Filter `frames[]` to the topic's timestamp range. Pull all `transcribed_text` and `notable`. On blind path, use `key_moments[]` metadata instead.
-2. Pick 1-5 frames to embed. Re-Read only if transcription isn't enough AND vision is available.
-3. Write the H2 section:
+## 4. 补齐证据缺口
+
+合并完全部 Pass 1 批次后检查 `gap_suspicions`。只要存在中、高优先级缺口就必须执行：
+
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\pass15_gaps\resolve_gaps.py "<folder>"
+```
+
+该命令默认每个缺口最多保留 6 帧、全局最多 60 帧，并使用代表性抽样限制近似重复图。只有确认确需更多证据时才显式提高 `--max-frames-per-gap` 或 `--max-total-frames`。默认只打印摘要；需要完整提示时添加 `--print-prompts`。
+
+按 `pass1_gaps_plan.json` 读取新帧，每批结果写入 `<folder>/pass15_results/batch_NNN.json`，然后运行：
+
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\merge_results.py "<folder>" --stage pass15
+```
+
+合并器校验计划身份、完整批次和精确帧集合后，才把第二轮 `frames[]` 合并回 `pass1_scan.json`：
+
+- 证据已补齐：写入 `"status": "resolved"`。
+- 确实无法确认：写入 `"status": "documented"` 和非空 `"resolution_note"`，并在相关正文内说明证据边界。
+
+不得为了通过验证而把未处理的缺口标成 `resolved`，也不能另建“待深入研究”章节。
+
+## 5. 写作
+
+生成不会污染最终文件的中文骨架：
+
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\pass2_scaffold\generate_notes.py "<folder>" --ppt
+```
+
+`notes.draft.md` 是已忽略的临时文件，不得加入版本控制；完成 `notes.md` 后可保留本地草稿，但交付与提交范围只能包含成品。
+
+阅读 `notes.draft.md`、`pass1_scan.json`、字幕和所选图片，然后完成 `notes.md`。头部必须包含来源、作者、日期、时长和标签；缺少可靠信息时明确写“未知（元数据未获取）”，禁止猜测。正文采用以下结构：
 
 ```markdown
-## <N>. <Topic name>
+# 视频标题
 
-### <N>.<M> <Sub-idea>
+> 来源 / 作者 / 日期 / 时长 / 标签
 
-![<descriptive alt>](screenshots/frame_XXXX_YY.jpg)
+## 视频简介
 
-<Transcribed text / table / code / ASCII diagram>
+## 内容结构
 
-**技术要点 / 设计意图**: <synthesis>
+## 1. 主题
+
+### 1.1 子主题
+
+![有意义的图片说明](screenshots/xxx.jpg)
+
+正文、表格、代码块或 ASCII 图
+
+**技术要点 / 设计意图**: 综合提炼
+
+## 总结与启发
 ```
 
-Document layout: `视频简介 → 内容结构 (ToC) → ## 1..N → 总结与启发`
+信息形式必须匹配内容：参数清单用表格，层级或架构图用 ASCII 树，代码用 fenced code block，前后差异用对照表。Q&A 必须写出实际问题和完整、有依据的回答。
 
-**Q&A**: transcribe each exchange fully — never compress to "Q&A 涉及：A、B、C 等".
+写每个主题前，按时间范围收集对应 `frames[].transcribed_text`、`frames[].notable` 和字幕上下文；每个 H2 使用 1—5 张图，通常每个子观点选择 1—2 张最有信息量的图。
 
-**总结与启发**: cross-cutting patterns the speaker didn't make explicit. Not a re-summary.
+每完成一个 H2 就立即回查对应字幕与图片。若发现证据或截图不足，立即向 `gap_suspicions` 追加条目，重新运行缺口解析并合并新证据，不能用无依据概括绕过缺口。
 
-Finalize: `Read` draft → `Write` complete final document to same path.
+### 按视频类型调整表达
 
-**Late-stage gap**: if a topic has insufficient frames during Pass 2, append to `gap_suspicions`, re-run `resolve_gaps.py`, dispatch one more sub-agent.
+| 类型 | 重点 |
+|------|------|
+| 技术分享 | 架构图、代码、参数、性能数据和可复用机制 |
+| 设计分享 | 具体原则、迭代前后对照和案例证据 |
+| 教程 | 有顺序的操作步骤、UI/快捷键和最终结果图 |
+| 项目复盘 | 决策时间线、有效/无效方案及其原因 |
 
-**If vision was unavailable**: write image captions from `key_moments[].reason` and surrounding subtitle text. Never skip embedding images just because the model can't read them.
+## 6. 验证、清理与完成门禁
 
-## Style by video type
+先做写作阶段验证：
 
-| Type | Emphasis |
-|---|---|
-| Tech talk | Architecture diagrams, code transcription, Inspector params, re-usable patterns |
-| Design talk | Concrete design principles, before/after iteration cases, quoted slide text |
-| Tutorial | Step-by-step list, UI/keyboard actions, final-result screenshot |
-| Postmortem | Timeline of decisions, what-worked / what-didn't tables |
-
-## Self-Check
-
-- [ ] **S0** — Step 3 finished and wrote `subtitles.json` with a final `[transcribe_audio] mode=... source=...` line.
-- [ ] **S1** — Pass 1 used parallel sub-agents via `plan_batches.py`; main agent never Read frames directly.
-- [ ] **S2** — ToC headings are topic names, not time ranges.
-- [ ] **S3** — Every body claim traces to `transcribed_text` in `pass1_scan.json`.
-- [ ] **S4** — Tables, code blocks, ASCII trees used where content demands.
-- [ ] **S5** — Each Q&A exchange has question + grounded answer, not a one-line summary.
-- [ ] **S6** — No "核心技术要点" pre-section; no "待深入研究". Unresolved points are inline.
-- [ ] **S7** — 总结与启发 includes a recap of the body, but prioritizes cross-cutting patterns and explains them in connection with the body.
-- [ ] **S8** — Notes.md has embedded images. If vision was unavailable, captions trace to `key_moments[].reason` or subtitle context.
-- [ ] **S9** — `prune_screenshots.py "<folder>" --dry-run` reports zero unreferenced screenshots after final cleanup.
-
-## Scripts
-
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\validate\validate_notes.py "<folder>"
 ```
-scripts/
-├── common/            shared helpers
-├── fetch/             create_folder, download_video
-├── subtitle/          transcribe_audio
-├── capture/           capture_ppt_frames, filter_frames, select_key_frames  (image_primary only)
-├── pass1_subtitle/    plan_batches, extract_key_moments
-├── pass1_image/       plan_batches
-├── pass15_gaps/       resolve_gaps
-└── pass2_scaffold/    generate_notes (draft only; Pass 2 main body has no script), prune_screenshots
+
+修完所有错误后预览未引用截图：
+
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\pass2_scaffold\prune_screenshots.py "<folder>" --dry-run
 ```
+
+人工确认预览只包含未引用候选图后，才执行清理：
+
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\pass2_scaffold\prune_screenshots.py "<folder>"
+```
+
+最后运行严格验证：
+
+```powershell
+python .codebuddy\skills\video-summarizer\scripts\validate\validate_notes.py "<folder>" --strict
+```
+
+严格验证失败时继续修复，不得报告完成。严格验证通过后，再汇报 `notes.md` 路径、图片数量和仍需用户判断的证据边界（如有）。
+
+严格验证会核对 Pass 1、关键帧视觉扫描和 Pass 1.5 的计划身份及完成批次，并拒绝正文引用 `informative: false` 的图片。它不能代替人工证据检查。完成前再确认：全部批次已合并；事实与参数均可追溯；Q&A 没有压缩成主题列表；总结给出了跨主题规律而非目录复述。
+
+严格验证依赖本地的计划和扫描 JSON，是生成阶段门禁。`notes/` 默认忽略这些 JSON，因此远程仓库只保存成品笔记和截图，不能在全新克隆中复现证据门禁；如需远程审计，必须由用户明确决定调整 `notes/.gitignore` 或另行提交证据文件。
+
+## 恢复与幂等规则
+
+- 已存在 `video.*`、`metadata.json` 或 `subtitles.json` 时先校验再复用，不重复下载或转录。
+- `notes.md` 已存在时，生成骨架也不得覆盖它。
+- 重新运行缺口解析时跳过已标记为 `resolved` 或 `documented` 的条目。
+- 上下文压缩、会话中断或接手他人工作后，按文件状态恢复：`subtitles.json` → `pass1_*_plan.json` → 各阶段 `*_results/batch_NNN.json` → `pass1_scan.json` → `notes.draft.md` → `notes.md` → 严格验证。
+- 中间 JSON 是证据与恢复状态，不是最终笔记内容；不要把它们复制进成品。
