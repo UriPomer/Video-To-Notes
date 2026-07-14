@@ -50,6 +50,62 @@ def test_run_whisper_falls_back_to_cpu_when_gpu_worker_fails(monkeypatch, capsys
     assert 'continuing on CPU; no retry needed' in captured.err
 
 
+def test_run_whisper_auto_prefers_cuda_when_available(monkeypatch, capsys):
+    module = load_module()
+
+    monkeypatch.setattr(module, '_cuda_available', lambda: True)
+
+    def fake_run_whisper_in_process(video_file, model_size, device, compute_type):
+        assert device == 'cuda'
+        assert compute_type == 'float16'
+        return ([{'start': 0.0, 'end': 1.0, 'text': 'GPU transcript'}], 'zh')
+
+    monkeypatch.setattr(module, '_run_whisper_in_process', fake_run_whisper_in_process)
+
+    segments, lang = module.run_whisper('video.mp4', model_size='tiny', device='auto')
+
+    captured = capsys.readouterr()
+    assert lang == 'zh'
+    assert segments[0]['text'] == 'GPU transcript'
+    assert 'CUDA detected; using GPU' in captured.out
+
+
+def test_run_whisper_auto_uses_cpu_without_cuda(monkeypatch):
+    module = load_module()
+
+    monkeypatch.setattr(module, '_cuda_available', lambda: False)
+
+    def fake_run_whisper_in_process(video_file, model_size, device, compute_type):
+        assert device == 'cpu'
+        assert compute_type == 'int8'
+        return ([{'start': 0.0, 'end': 1.0, 'text': 'CPU transcript'}], 'zh')
+
+    monkeypatch.setattr(module, '_run_whisper_in_process', fake_run_whisper_in_process)
+
+    segments, lang = module.run_whisper('video.mp4', model_size='tiny', device='auto')
+
+    assert lang == 'zh'
+    assert segments[0]['text'] == 'CPU transcript'
+
+
+def test_run_whisper_falls_back_when_cuda_library_load_fails(monkeypatch, capsys):
+    module = load_module()
+
+    def fake_run_whisper_in_process(video_file, model_size, device, compute_type):
+        if device == 'cuda':
+            raise OSError('cublas64_12.dll could not be loaded')
+        return ([{'start': 0.0, 'end': 1.0, 'text': 'CPU fallback'}], 'zh')
+
+    monkeypatch.setattr(module, '_run_whisper_in_process', fake_run_whisper_in_process)
+
+    segments, lang = module.run_whisper('video.mp4', model_size='tiny', device='cuda')
+
+    captured = capsys.readouterr()
+    assert lang == 'zh'
+    assert segments[0]['text'] == 'CPU fallback'
+    assert 'continuing on CPU; no retry needed' in captured.err
+
+
 def test_transcribe_prefers_platform_subtitle_before_whisper(tmp_path, monkeypatch):
     module = load_module()
     video_folder = tmp_path / 'video'

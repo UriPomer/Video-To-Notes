@@ -29,6 +29,7 @@ pip install yt-dlp you-get opencv-python numpy faster-whisper
 
 - `ffmpeg` 需要在 PATH 中
 - Windows 下不要用 Git Bash 跑这里的 Python 命令
+- 转录默认自动检测 CUDA：可用时使用 GPU，否则使用 CPU
 - 如果 GPU 转录失败，脚本会自动回退到 CPU，无需手动重试
 
 ## 快速开始

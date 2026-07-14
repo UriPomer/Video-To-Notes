@@ -195,7 +195,16 @@ def _run_whisper_in_process(
 
 
 
-def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cpu') -> Tuple[List[Dict], str]:
+def _cuda_available() -> bool:
+    """Return whether CTranslate2 can see at least one CUDA device."""
+    try:
+        import ctranslate2  # type: ignore
+        return ctranslate2.get_cuda_device_count() > 0
+    except (ImportError, OSError, RuntimeError):
+        return False
+
+
+def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'auto') -> Tuple[List[Dict], str]:
     """Transcribe video audio with faster-whisper.
 
     Returns (segments, detected_language).
@@ -203,6 +212,17 @@ def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cp
     Raises RuntimeError if faster-whisper isn't installed or ffmpeg extract
     fails. Caller decides whether to fall back to image_primary.
     """
+    if device not in {'auto', 'cpu', 'cuda'}:
+        raise ValueError(f"unsupported whisper device: {device}")
+
+    if device == 'auto':
+        if _cuda_available():
+            print("[transcribe_audio] CUDA detected; using GPU.", flush=True)
+            device = 'cuda'
+        else:
+            print("[transcribe_audio] CUDA not available; using CPU.", flush=True)
+            device = 'cpu'
+
     if device == 'cuda':
         print(f"[transcribe_audio] loading whisper model on GPU ({model_size})...", flush=True)
         try:
@@ -210,7 +230,7 @@ def run_whisper(video_file: str, model_size: str = 'large-v3', device: str = 'cp
                 lambda: _run_whisper_in_process(video_file, model_size, 'cuda', 'float16'),
                 'GPU Whisper',
             )
-        except RuntimeError as gpu_err:
+        except (RuntimeError, OSError, ValueError) as gpu_err:
             print(
                 f"[transcribe_audio] GPU failed ({gpu_err}); continuing on CPU; no retry needed.",
                 file=sys.stderr,
@@ -259,7 +279,7 @@ def evaluate_sparsity(segments: List[Dict], duration_sec: float) -> Dict:
 # Entry
 # ----------------------------------------------------------------------
 
-def transcribe(video_folder: str, whisper_model: str = 'large-v3', device: str = 'cpu') -> Dict:
+def transcribe(video_folder: str, whisper_model: str = 'large-v3', device: str = 'auto') -> Dict:
     enable_live_logs()
     video_folder = os.path.abspath(video_folder)
     video_file = locate_video_file(video_folder)
@@ -337,8 +357,8 @@ def main():
     parser.add_argument('video_folder', nargs='?', help='Folder containing video.mp4 and (optional) video.<lang>.vtt')
     parser.add_argument('--whisper-model', default='medium',
                         help='faster-whisper model size (tiny/base/small/medium/large-v3). Default: medium')
-    parser.add_argument('--device', default='cpu',
-                        help='Device to run whisper on: cpu or cuda. Default: cpu')
+    parser.add_argument('--device', choices=('auto', 'cpu', 'cuda'), default='auto',
+                        help='Device for whisper: auto, cpu, or cuda. Default: auto')
     args = parser.parse_args()
 
     if not args.video_folder:

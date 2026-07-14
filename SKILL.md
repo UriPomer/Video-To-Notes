@@ -57,10 +57,11 @@ Bilibili 上 `yt-dlp` 遇到 412 后转由 `you-get` 处理可能是正常降级
 python -u .codebuddy\skills\video-summarizer\scripts\subtitle\transcribe_audio.py "<folder>"
 ```
 
-默认使用 `medium + CPU`。只有用户要求或环境已确认适合时才显式使用 GPU：
+默认使用 `medium + auto`：CTranslate2 能识别 CUDA 时自动使用 GPU，否则使用 CPU。需要强制指定设备时：
 
 ```powershell
 python -u .codebuddy\skills\video-summarizer\scripts\subtitle\transcribe_audio.py "<folder>" --whisper-model large-v3 --device cuda
+python -u .codebuddy\skills\video-summarizer\scripts\subtitle\transcribe_audio.py "<folder>" --device cpu
 ```
 
 GPU 失败时脚本会自动回退 CPU。只要命令没有非零退出且写出了 `subtitles.json`，就等待其自然完成，不要中途重试。

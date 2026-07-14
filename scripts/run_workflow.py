@@ -39,7 +39,7 @@ def run_workflow(url: str, ppt_mode: bool = False, interval: int = 30,
                  threshold: float = 0.03, max_depth: int = 6,
                  initial_interval: int = 10, key_frames: int = 100,
                  no_key_select: bool = False, no_filter: bool = False,
-                 whisper_model: str = 'medium', device: str = 'cpu',
+                 whisper_model: str = 'medium', device: str = 'auto',
                  force_image_mode: bool = False):
     """Run complete video summarization workflow.
 
@@ -180,8 +180,8 @@ Examples:
                         help='Skip uninformative-frame filter step')
     parser.add_argument('--whisper-model', default='medium',
                         help='faster-whisper model size if subtitle falls back to ASR (default: medium)')
-    parser.add_argument('--device', default='cpu',
-                        help='Device for whisper: cpu or cuda (default: cpu)')
+    parser.add_argument('--device', choices=('auto', 'cpu', 'cuda'), default='auto',
+                        help='Device for whisper: auto, cpu, or cuda (default: auto)')
     parser.add_argument('--force-image-mode', action='store_true',
                         help='Ignore subtitles and force the image-primary pipeline')
 
